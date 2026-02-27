@@ -24,8 +24,14 @@ profile.cov
 go.work
 go.work.sum
 
-# Built binaries
+# Build output
+build/
 credctl
+.DS_Store
+
+# Xcode
+xcode/build/
+xcuserdata/
 
 # env file
 .env

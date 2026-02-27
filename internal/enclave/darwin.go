@@ -26,20 +26,42 @@ static int generateSecureEnclaveKey(const char *tag, int tagLen, SecKeyRef *outK
     // Secure Enclave token
     CFDictionarySetValue(attrs, kSecAttrTokenID, kSecAttrTokenIDSecureEnclave);
 
+    // Access control — required for Secure Enclave keys
+    CFErrorRef acError = NULL;
+    SecAccessControlRef access = SecAccessControlCreateWithFlags(
+        kCFAllocatorDefault,
+        kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        kSecAccessControlPrivateKeyUsage,
+        &acError);
+    if (access == NULL) {
+        if (acError != NULL) {
+            CFStringRef desc = CFErrorCopyDescription(acError);
+            CFStringGetCString(desc, errBuf, errBufLen, kCFStringEncodingUTF8);
+            CFRelease(desc);
+            CFRelease(acError);
+        } else {
+            snprintf(errBuf, errBufLen, "failed to create access control");
+        }
+        CFRelease(keySize);
+        CFRelease(attrs);
+        return -1;
+    }
+
     // Private key attributes
     CFMutableDictionaryRef privateAttrs = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CFDictionarySetValue(privateAttrs, kSecAttrIsPermanent, kCFBooleanTrue);
+    CFDictionarySetValue(privateAttrs, kSecAttrAccessControl, access);
 
     CFDataRef tagData = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)tag, tagLen);
     CFDictionarySetValue(privateAttrs, kSecAttrApplicationTag, tagData);
-    CFDictionarySetValue(privateAttrs, kSecAttrAccessible, kSecAttrAccessibleWhenUnlockedThisDeviceOnly);
 
     CFDictionarySetValue(attrs, kSecPrivateKeyAttrs, privateAttrs);
 
     CFErrorRef error = NULL;
     SecKeyRef privateKey = SecKeyCreateRandomKey(attrs, &error);
 
+    CFRelease(access);
     CFRelease(tagData);
     CFRelease(privateAttrs);
     CFRelease(keySize);
