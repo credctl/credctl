@@ -15,14 +15,23 @@ const (
 	pubKeyFile    = "device.pub"
 )
 
+// AWSConfig holds optional AWS authentication settings.
+type AWSConfig struct {
+	RoleARN   string `json:"role_arn"`
+	IssuerURL string `json:"issuer_url"`
+	Region    string `json:"region,omitempty"`
+	S3Bucket  string `json:"s3_bucket,omitempty"`
+}
+
 // Config represents the persisted device identity configuration.
 type Config struct {
-	Version       int       `json:"version"`
-	DeviceID      string    `json:"device_id"`
-	KeyTag        string    `json:"key_tag"`
-	CreatedAt     time.Time `json:"created_at"`
-	EnclaveType   string    `json:"enclave_type"`
-	PublicKeyPath string    `json:"public_key_path"`
+	Version       int        `json:"version"`
+	DeviceID      string     `json:"device_id"`
+	KeyTag        string     `json:"key_tag"`
+	CreatedAt     time.Time  `json:"created_at"`
+	EnclaveType   string     `json:"enclave_type"`
+	PublicKeyPath string     `json:"public_key_path"`
+	AWS           *AWSConfig `json:"aws,omitempty"`
 }
 
 // ConfigDir returns the path to ~/.credctl.

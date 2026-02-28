@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: credctl OIDC federation infrastructure — S3, CloudFront, IAM OIDC provider, IAM role
+
+Parameters:
+  DeviceFingerprint:
+    Type: String
+    Description: Device fingerprint (sub claim) from 'credctl status'
+
+  RoleName:
+    Type: String
+    Default: credctl-device-role
+    Description: Name of the IAM role to create
+
+  RolePolicyArn:
+    Type: String
+    Description: Managed policy ARN to attach to the role (e.g. arn:aws:iam::aws:policy/ReadOnlyAccess)
+
+Resources:
+  OIDCBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  OIDCBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref OIDCBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${OIDCBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub 'credctl OIDC discovery (${AWS::StackName})'
+        DefaultCacheBehavior:
+          TargetOriginId: s3-oidc
+          ViewerProtocolPolicy: https-only
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          AllowedMethods:
+            - GET
+            - HEAD
+          Compress: true
+        Origins:
+          - Id: s3-oidc
+            DomainName: !GetAtt OIDCBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+        HttpVersion: http2
+
+  OIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    DependsOn: CloudFrontDistribution
+    Properties:
+      Url: !Sub 'https://${CloudFrontDistribution.DomainName}'
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - '0000000000000000000000000000000000000000'
+
+  DeviceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      ManagedPolicyArns:
+        - !Ref RolePolicyArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref OIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                !Sub '${CloudFrontDistribution.DomainName}:aud': sts.amazonaws.com
+                !Sub '${CloudFrontDistribution.DomainName}:sub': !Ref DeviceFingerprint
+
+Outputs:
+  IssuerURL:
+    Description: OIDC issuer URL (CloudFront domain)
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+
+  RoleARN:
+    Description: IAM role ARN for credctl auth
+    Value: !GetAtt DeviceRole.Arn
+
+  BucketName:
+    Description: S3 bucket for OIDC documents
+    Value: !Ref OIDCBucket
+
+  CloudFrontDomain:
+    Description: CloudFront distribution domain name
+    Value: !GetAtt CloudFrontDistribution.DomainName

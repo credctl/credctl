@@ -47,5 +47,18 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Println("  Key accessible: yes")
 	}
 
+	// Show AWS config if present
+	if cfg.AWS != nil {
+		fmt.Println("\nAWS Configuration:")
+		fmt.Printf("  Role ARN:   %s\n", cfg.AWS.RoleARN)
+		fmt.Printf("  Issuer URL: %s\n", cfg.AWS.IssuerURL)
+		if cfg.AWS.Region != "" {
+			fmt.Printf("  Region:     %s\n", cfg.AWS.Region)
+		}
+		if cfg.AWS.S3Bucket != "" {
+			fmt.Printf("  S3 Bucket:  %s\n", cfg.AWS.S3Bucket)
+		}
+	}
+
 	return nil
 }
