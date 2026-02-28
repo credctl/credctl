@@ -94,16 +94,23 @@ Resources:
       ManagedPolicyArns:
         - !Ref RolePolicyArn
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Federated: !Ref OIDCProvider
-            Action: sts:AssumeRoleWithWebIdentity
-            Condition:
-              StringEquals:
-                !Sub '${CloudFrontDistribution.DomainName}:aud': sts.amazonaws.com
-                !Sub '${CloudFrontDistribution.DomainName}:sub': !Ref DeviceFingerprint
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Principal": {"Federated": "${OIDCProvider}"},
+                "Action": "sts:AssumeRoleWithWebIdentity",
+                "Condition": {
+                  "StringEquals": {
+                    "${Domain}:aud": "sts.amazonaws.com",
+                    "${Domain}:sub": "${DeviceFingerprint}"
+                  }
+                }
+              }]
+            }
+          - Domain: !GetAtt CloudFrontDistribution.DomainName
 
 Outputs:
   IssuerURL:

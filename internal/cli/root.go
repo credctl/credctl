@@ -8,9 +8,11 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "credctl",
-	Short: "Manage credentials with machine identity",
-	Long:  "credctl uses the macOS Secure Enclave to create hardware-bound device identities for credential management.",
+	Use:           "credctl",
+	Short:         "Manage credentials with machine identity",
+	Long:          "credctl uses the macOS Secure Enclave to create hardware-bound device identities for credential management.",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 func Execute() {
