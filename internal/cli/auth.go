@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/matzhouse/credctl/internal/aws"
@@ -80,8 +81,9 @@ func runAuth(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("build JWT: %w", err)
 	}
 
-	// Call STS
-	sessionName := "credctl-" + cfg.DeviceID[:8]
+	// Call STS — session name must match [\w+=,.@-]*
+	fingerprint := strings.TrimPrefix(cfg.DeviceID, "SHA256:")
+	sessionName := "credctl-" + fingerprint[:8]
 	fmt.Fprintln(os.Stderr, "Requesting temporary credentials from AWS STS...")
 	creds, err := aws.AssumeRoleWithWebIdentity(cfg.AWS.RoleARN, sessionName, token, cfg.AWS.Region)
 	if err != nil {
