@@ -35,3 +35,6 @@ jobs:
 
       - name: Gosec
         run: gosec -exclude=G104,G115,G117,G204,G304,G703 ./...
+
+      - name: Build app bundle (ad-hoc signing)
+        run: make build SIGNING_IDENTITY="-"

@@ -6,5 +6,7 @@
     <array>
         <string>JWR3NGC3Z6.com.crzy.credctl</string>
     </array>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
 </dict>
 </plist>

@@ -1,20 +1,34 @@
 APP_NAME := credctl
 APP_BUNDLE := build/$(APP_NAME).app
 BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
-SIGNING_IDENTITY := Apple Development: mat@crzy.co.uk (DX4M4W436Y)
+SIGNING_IDENTITY ?= Apple Development: mat@crzy.co.uk (DX4M4W436Y)
 
-.PHONY: build clean install
+VERSION ?= dev
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+LDFLAGS := -X github.com/matzhouse/credctl/internal/cli.Version=$(VERSION) \
+           -X github.com/matzhouse/credctl/internal/cli.Commit=$(COMMIT)
+
+.PHONY: build clean install package
 
 build:
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
 	@cp xcode/credctl/Info.plist $(APP_BUNDLE)/Contents/Info.plist
 	@cp embedded.provisionprofile $(APP_BUNDLE)/Contents/embedded.provisionprofile
-	CGO_ENABLED=1 go build -o $(BINARY) ./cmd/credctl
-	@codesign --sign "$(SIGNING_IDENTITY)" --entitlements entitlements.plist --force $(APP_BUNDLE)
+	CGO_ENABLED=1 go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/credctl
+	@codesign --sign "$(SIGNING_IDENTITY)" \
+		--entitlements entitlements.plist \
+		--options runtime \
+		--force $(APP_BUNDLE)
 	@echo "Built: $(BINARY)"
 
+package: build
+	@mkdir -p dist
+	@tar -czf dist/$(APP_NAME)-$(VERSION)-darwin-arm64.tar.gz -C build $(APP_NAME).app
+	@cd dist && shasum -a 256 $(APP_NAME)-$(VERSION)-darwin-arm64.tar.gz > checksums.txt
+	@echo "Package: dist/$(APP_NAME)-$(VERSION)-darwin-arm64.tar.gz"
+
 clean:
-	rm -rf build/
+	rm -rf build/ dist/
 
 install: build
 	@ln -sf $(CURDIR)/$(BINARY) /usr/local/bin/$(APP_NAME)
