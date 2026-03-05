@@ -8,7 +8,7 @@ import (
 
 // Set via ldflags at build time:
 //
-//	go build -ldflags "-X github.com/matzhouse/credctl/internal/cli.Version=v0.1.0 -X github.com/matzhouse/credctl/internal/cli.Commit=abc123"
+//	go build -ldflags "-X github.com/credctl/credctl/internal/cli.Version=v0.1.0 -X github.com/credctl/credctl/internal/cli.Commit=abc123"
 var (
 	Version = "dev"
 	Commit  = "none"

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/matzhouse/credctl/internal/config"
-	"github.com/matzhouse/credctl/internal/enclave"
+	"github.com/credctl/credctl/internal/config"
+	"github.com/credctl/credctl/internal/enclave"
 	"github.com/spf13/cobra"
 )
 

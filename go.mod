@@ -1,4 +1,4 @@
-module github.com/matzhouse/credctl
+module github.com/credctl/credctl
 
 go 1.25.7
 

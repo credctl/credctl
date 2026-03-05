@@ -6,7 +6,7 @@ A Go CLI called `credctl` using `spf13/cobra`. This is a proof of concept for th
 
 ## Project setup
 
-- Module path: `github.com/matzhouse/credctl`
+- Module path: `github.com/credctl/credctl`
 - Use `spf13/cobra` for the CLI framework. No `cobra-cli` scaffolding — just set up the command tree manually, it's cleaner.
 - Go 1.22+ (for build consistency)
 - The repo name is `credctl`

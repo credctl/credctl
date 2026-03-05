@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/matzhouse/credctl/internal/config"
+	"github.com/credctl/credctl/internal/config"
 	"github.com/spf13/cobra"
 )
 

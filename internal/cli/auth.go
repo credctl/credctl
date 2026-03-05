@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/matzhouse/credctl/internal/aws"
-	"github.com/matzhouse/credctl/internal/config"
-	"github.com/matzhouse/credctl/internal/enclave"
-	"github.com/matzhouse/credctl/internal/jwt"
+	"github.com/credctl/credctl/internal/aws"
+	"github.com/credctl/credctl/internal/config"
+	"github.com/credctl/credctl/internal/enclave"
+	"github.com/credctl/credctl/internal/jwt"
 	"github.com/spf13/cobra"
 )
 

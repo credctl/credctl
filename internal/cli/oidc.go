@@ -6,9 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/matzhouse/credctl/internal/config"
-	"github.com/matzhouse/credctl/internal/jwt"
-	"github.com/matzhouse/credctl/internal/oidc"
+	"github.com/credctl/credctl/internal/config"
+	"github.com/credctl/credctl/internal/jwt"
+	"github.com/credctl/credctl/internal/oidc"
 	"github.com/spf13/cobra"
 )
 

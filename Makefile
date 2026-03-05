@@ -5,8 +5,8 @@ SIGNING_IDENTITY ?= Apple Development: mat@crzy.co.uk (DX4M4W436Y)
 
 VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
-LDFLAGS := -X github.com/matzhouse/credctl/internal/cli.Version=$(VERSION) \
-           -X github.com/matzhouse/credctl/internal/cli.Commit=$(COMMIT)
+LDFLAGS := -X github.com/credctl/credctl/internal/cli.Version=$(VERSION) \
+           -X github.com/credctl/credctl/internal/cli.Commit=$(COMMIT)
 
 .PHONY: build clean install package
 

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/matzhouse/credctl/internal/jwt"
+	"github.com/credctl/credctl/internal/jwt"
 )
 
 // OpenIDConfiguration is the OIDC discovery document.
