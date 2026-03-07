@@ -21,8 +21,10 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test -race ./...
+      - name: Test with coverage
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          go tool cover -func=coverage.out | tail -1
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest

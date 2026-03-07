@@ -7,9 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/credctl/credctl/internal/aws"
-	"github.com/credctl/credctl/internal/config"
-	"github.com/credctl/credctl/internal/enclave"
 	"github.com/credctl/credctl/internal/jwt"
 	"github.com/spf13/cobra"
 )
@@ -43,7 +40,7 @@ type credentialProcessOutput struct {
 }
 
 func runAuth(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load()
+	cfg, err := activeDeps.loadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
@@ -55,7 +52,7 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	}
 
 	// Read public key to derive KID
-	pubKeyPath, err := config.PublicKeyPath()
+	pubKeyPath, err := activeDeps.publicKeyPath()
 	if err != nil {
 		return fmt.Errorf("public key path: %w", err)
 	}
@@ -70,7 +67,7 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build and sign JWT using the Secure Enclave
-	enc := enclave.New()
+	enc := activeDeps.newEnclave()
 	signFn := func(data []byte) ([]byte, error) {
 		return enc.Sign(cfg.KeyTag, data)
 	}
@@ -85,7 +82,7 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	fingerprint := strings.TrimPrefix(cfg.DeviceID, "SHA256:")
 	sessionName := "credctl-" + fingerprint[:8]
 	fmt.Fprintln(os.Stderr, "Requesting temporary credentials from AWS STS...")
-	creds, err := aws.AssumeRoleWithWebIdentity(cfg.AWS.RoleARN, sessionName, token, cfg.AWS.Region)
+	creds, err := activeDeps.assumeRole(cfg.AWS.RoleARN, sessionName, token, cfg.AWS.Region)
 	if err != nil {
 		return fmt.Errorf("assume role: %w", err)
 	}

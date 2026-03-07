@@ -8,7 +8,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 LDFLAGS := -X github.com/credctl/credctl/internal/cli.Version=$(VERSION) \
            -X github.com/credctl/credctl/internal/cli.Commit=$(COMMIT)
 
-.PHONY: build clean install package
+.PHONY: build clean install package test test-integration coverage
 
 build:
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
@@ -33,3 +33,13 @@ clean:
 install: build
 	@ln -sf $(CURDIR)/$(BINARY) /usr/local/bin/$(APP_NAME)
 	@echo "Installed: /usr/local/bin/$(APP_NAME) -> $(BINARY)"
+
+test:
+	go test -race -count=1 ./...
+
+test-integration:
+	go test -race -count=1 -tags=integration ./...
+
+coverage:
+	go test -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -func=coverage.out | tail -1

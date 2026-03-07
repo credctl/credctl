@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/credctl/credctl/internal/config"
-	"github.com/credctl/credctl/internal/enclave"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +28,7 @@ func init() {
 
 func runInit(cmd *cobra.Command, args []string) error {
 	// Check for existing config
-	cfg, err := config.Load()
+	cfg, err := activeDeps.loadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
@@ -43,7 +42,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check Secure Enclave availability
-	enc := enclave.New()
+	enc := activeDeps.newEnclave()
 	if !enc.Available() {
 		return fmt.Errorf("Secure Enclave is not available on this device")
 	}
@@ -64,12 +63,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Write public key PEM
-	pubKeyPath, err := config.PublicKeyPath()
+	pubKeyPath, err := activeDeps.publicKeyPath()
 	if err != nil {
 		return fmt.Errorf("failed to determine public key path: %w", err)
 	}
 
-	dir, err := config.ConfigDir()
+	dir, err := activeDeps.configDir()
 	if err != nil {
 		return fmt.Errorf("failed to determine config directory: %w", err)
 	}
@@ -92,7 +91,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		PublicKeyPath: "~/.credctl/device.pub",
 	}
 
-	if err := config.Save(newCfg); err != nil {
+	if err := activeDeps.saveConfig(newCfg); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 

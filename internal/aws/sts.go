@@ -53,6 +53,11 @@ func AssumeRoleWithWebIdentity(roleARN, sessionName, token, region string) (*Cre
 		endpoint = fmt.Sprintf("https://sts.%s.amazonaws.com", region)
 	}
 
+	return assumeRole(endpoint, roleARN, sessionName, token)
+}
+
+// assumeRole performs the actual STS AssumeRoleWithWebIdentity HTTP call.
+func assumeRole(endpoint, roleARN, sessionName, token string) (*Credentials, error) {
 	params := url.Values{
 		"Action":           {"AssumeRoleWithWebIdentity"},
 		"Version":          {"2011-06-15"},
@@ -91,9 +96,9 @@ func AssumeRoleWithWebIdentity(roleARN, sessionName, token, region string) (*Cre
 	}
 
 	return &Credentials{
-		AccessKeyID:     stsResp.Result.Credentials.AccessKeyID,
-		SecretAccessKey:  stsResp.Result.Credentials.SecretAccessKey,
-		SessionToken:    stsResp.Result.Credentials.SessionToken,
-		Expiration:      expiration,
+		AccessKeyID:    stsResp.Result.Credentials.AccessKeyID,
+		SecretAccessKey: stsResp.Result.Credentials.SecretAccessKey,
+		SessionToken:   stsResp.Result.Credentials.SessionToken,
+		Expiration:     expiration,
 	}, nil
 }

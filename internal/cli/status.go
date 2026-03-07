@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/credctl/credctl/internal/config"
-	"github.com/credctl/credctl/internal/enclave"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +18,7 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load()
+	cfg, err := activeDeps.loadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
@@ -39,7 +37,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Public key:   %s\n", cfg.PublicKeyPath)
 
 	// Verify key is still accessible
-	enc := enclave.New()
+	enc := activeDeps.newEnclave()
 	_, err = enc.LoadKey(cfg.KeyTag)
 	if err != nil {
 		fmt.Println("  Key accessible: no (key not found in keychain)")
