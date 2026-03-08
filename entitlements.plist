@@ -4,7 +4,7 @@
 <dict>
     <key>keychain-access-groups</key>
     <array>
-        <string>JWR3NGC3Z6.com.crzy.credctl</string>
+        <string>P7TXLAS2QY.com.crzy.credctl</string>
     </array>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>

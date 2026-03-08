@@ -1,7 +1,7 @@
 APP_NAME := credctl
 APP_BUNDLE := build/$(APP_NAME).app
 BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
-SIGNING_IDENTITY ?= Apple Development: mat@crzy.co.uk (DX4M4W436Y)
+SIGNING_IDENTITY ?= Developer ID Application: CRZY LTD (P7TXLAS2QY)
 
 VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
