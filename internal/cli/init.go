@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/credctl/credctl/internal/config"
@@ -16,7 +17,7 @@ var (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Generate a Secure Enclave key pair and create device identity",
+	Short: "Generate a hardware-bound key pair and create device identity",
 	RunE:  runInit,
 }
 
@@ -41,10 +42,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Check Secure Enclave availability
+	// Check hardware enclave availability
 	enc := activeDeps.newEnclave()
 	if !enc.Available() {
-		return fmt.Errorf("Secure Enclave is not available on this device")
+		if runtime.GOOS == "linux" {
+			return fmt.Errorf("TPM 2.0 is not available (check /dev/tpmrm0 permissions: sudo usermod -aG tss $USER)")
+		}
+		return fmt.Errorf("hardware enclave is not available on this device")
 	}
 
 	// If --force, delete existing key
@@ -56,7 +60,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate key
-	fmt.Println("Generating Secure Enclave key pair...")
+	enclaveName := "Secure Enclave"
+	enclaveType := "secure_enclave"
+	if runtime.GOOS == "linux" {
+		enclaveName = "TPM 2.0"
+		enclaveType = "tpm2"
+	}
+	fmt.Printf("Generating %s key pair...\n", enclaveName)
 	key, err := enc.GenerateKey(initKeyTag)
 	if err != nil {
 		return fmt.Errorf("key generation failed: %w", err)
@@ -87,8 +97,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		DeviceID:      key.Fingerprint,
 		KeyTag:        key.Tag,
 		CreatedAt:     key.CreatedAt,
-		EnclaveType:   "secure_enclave",
+		EnclaveType:   enclaveType,
 		PublicKeyPath: "~/.credctl/device.pub",
+	}
+	if runtime.GOOS == "linux" {
+		newCfg.TPMHandle = 0x81010001
 	}
 
 	if err := activeDeps.saveConfig(newCfg); err != nil {
@@ -97,7 +110,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Print summary
 	fmt.Println()
-	fmt.Println("\u2713 Device identity created (Secure Enclave)")
+	fmt.Printf("\u2713 Device identity created (%s)\n", enclaveName)
 	fmt.Printf("  Fingerprint: %s\n", key.Fingerprint)
 	fmt.Printf("  Public key:  %s\n", pubKeyPath)
 	fmt.Println()

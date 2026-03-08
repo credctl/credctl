@@ -30,6 +30,7 @@ type Config struct {
 	KeyTag        string     `json:"key_tag"`
 	CreatedAt     time.Time  `json:"created_at"`
 	EnclaveType   string     `json:"enclave_type"`
+	TPMHandle     uint32     `json:"tpm_handle,omitempty"`
 	PublicKeyPath string     `json:"public_key_path"`
 	AWS           *AWSConfig `json:"aws,omitempty"`
 }
