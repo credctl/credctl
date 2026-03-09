@@ -22,7 +22,7 @@ build:
 		--force $(APP_BUNDLE)
 	@echo "Built: $(BINARY)"
 
-package: build
+package:
 	@mkdir -p dist
 	@tar -czf dist/$(APP_NAME)-$(VERSION)-darwin-arm64.tar.gz -C build $(APP_NAME).app
 	@cd dist && shasum -a 256 $(APP_NAME)-$(VERSION)-darwin-arm64.tar.gz > checksums.txt
