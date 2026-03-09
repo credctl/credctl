@@ -15,15 +15,37 @@ import (
 	"github.com/google/go-tpm/tpm2/transport/simulator"
 )
 
-// withSimulator overrides the package-level openTPM to use the TPM simulator
-// and returns a cleanup function that restores the original.
+// nopCloser wraps a TPMCloser but makes Close() a no-op so the simulator
+// stays open across multiple openTPM() calls within a single test.
+type nopCloser struct {
+	tpm transport.TPMCloser
+}
+
+func (n *nopCloser) Send(input []byte) ([]byte, error) {
+	return n.tpm.Send(input)
+}
+
+func (n *nopCloser) Close() error { return nil }
+
+// withSimulator opens a single TPM simulator for the test and overrides
+// openTPM to return it on every call. The simulator is closed at test cleanup.
 func withSimulator(t *testing.T) {
 	t.Helper()
 	orig := openTPM
-	openTPM = func() (transport.TPMCloser, error) {
-		return simulator.OpenSimulator()
+
+	sim, err := simulator.OpenSimulator()
+	if err != nil {
+		t.Fatalf("could not open TPM simulator: %v", err)
 	}
-	t.Cleanup(func() { openTPM = orig })
+
+	openTPM = func() (transport.TPMCloser, error) {
+		return &nopCloser{tpm: sim}, nil
+	}
+
+	t.Cleanup(func() {
+		openTPM = orig
+		sim.Close()
+	})
 }
 
 func TestTPM_GenerateLoadDelete(t *testing.T) {
@@ -139,7 +161,7 @@ func TestTPM_DuplicateKey(t *testing.T) {
 
 	_, err = enc.GenerateKey(tag)
 	if err == nil {
-		t.Error("expected error generating duplicate key")
+		t.Fatal("expected error generating duplicate key")
 	}
 	if !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("unexpected error: %v", err)
