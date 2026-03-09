@@ -50,19 +50,24 @@ jobs:
 
           security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
 
+      - name: Fetch signing artifacts
+        env:
+          SIGNING_REPO_TOKEN: ${{ secrets.SIGNING_REPO_TOKEN }}
+        run: |
+          git clone https://x-access-token:${SIGNING_REPO_TOKEN}@github.com/credctl/apple-signing.git $RUNNER_TEMP/apple-signing
+
       - name: Install provisioning profile
         env:
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
         run: |
-          PP_PATH=$RUNNER_TEMP/embedded.provisionprofile
-          echo "$APPLE_PROVISIONING_PROFILE" | base64 --decode > "$PP_PATH"
-          cp "$PP_PATH" embedded.provisionprofile
+          echo "$APPLE_PROVISIONING_PROFILE" | base64 --decode > $RUNNER_TEMP/apple-signing/embedded.provisionprofile
 
       - name: Build
         run: |
           make build \
             VERSION=${{ steps.version.outputs.VERSION }} \
-            SIGNING_IDENTITY="${{ secrets.APPLE_SIGNING_IDENTITY }}"
+            SIGNING_IDENTITY="${{ secrets.APPLE_SIGNING_IDENTITY }}" \
+            SIGNING_DIR=$RUNNER_TEMP/apple-signing
 
       - name: Notarize
         env:

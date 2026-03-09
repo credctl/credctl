@@ -2,6 +2,7 @@ APP_NAME := credctl
 APP_BUNDLE := build/$(APP_NAME).app
 BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 SIGNING_IDENTITY ?= Developer ID Application: CRZY LTD (P7TXLAS2QY)
+SIGNING_DIR ?= .
 
 VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -12,11 +13,11 @@ LDFLAGS := -X github.com/credctl/credctl/internal/cli.Version=$(VERSION) \
 
 build:
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
-	@cp xcode/credctl/Info.plist $(APP_BUNDLE)/Contents/Info.plist
-	@cp embedded.provisionprofile $(APP_BUNDLE)/Contents/embedded.provisionprofile
+	@cp $(SIGNING_DIR)/Info.plist $(APP_BUNDLE)/Contents/Info.plist
+	@cp $(SIGNING_DIR)/embedded.provisionprofile $(APP_BUNDLE)/Contents/embedded.provisionprofile
 	CGO_ENABLED=1 go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/credctl
 	@codesign --sign "$(SIGNING_IDENTITY)" \
-		--entitlements entitlements.plist \
+		--entitlements $(SIGNING_DIR)/entitlements.plist \
 		--options runtime \
 		--force $(APP_BUNDLE)
 	@echo "Built: $(BINARY)"
