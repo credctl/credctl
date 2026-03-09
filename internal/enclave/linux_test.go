@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/simulator"
 )
 
@@ -19,10 +20,7 @@ import (
 func withSimulator(t *testing.T) {
 	t.Helper()
 	orig := openTPM
-	openTPM = func() (interface {
-		Send([]byte) ([]byte, error)
-		Close() error
-	}, error) {
+	openTPM = func() (transport.TPMCloser, error) {
 		return simulator.OpenSimulator()
 	}
 	t.Cleanup(func() { openTPM = orig })
