@@ -63,7 +63,7 @@ alias credctl='./build/credctl.app/Contents/MacOS/credctl'
 
 ### Why the `.app` bundle?
 
-macOS requires a provisioning profile for binaries that use restricted entitlements like `keychain-access-groups`. Provisioning profiles can only be embedded in `.app` bundles, not standalone CLI binaries. The `.app` wrapper is minimal — it contains the Go binary, an `Info.plist`, and the provisioning profile.
+macOS requires a provisioning profile for binaries that use the Secure Enclave. Provisioning profiles can only be embedded in `.app` bundles, not standalone CLI binaries. The `.app` wrapper is minimal — it contains the Go binary, an `Info.plist`, and the provisioning profile.
 
 ### Cross-compilation
 
