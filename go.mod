@@ -1,6 +1,6 @@
 module github.com/credctl/credctl
 
-go 1.25.7
+go 1.26.1
 
 require (
 	github.com/google/go-tpm v0.9.8
