@@ -3,9 +3,19 @@ package aws
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse URL %q: %v", raw, err)
+	}
+	return u
+}
 
 const validSTSResponse = `<AssumeRoleWithWebIdentityResponse>
   <AssumeRoleWithWebIdentityResult>
@@ -33,7 +43,7 @@ func TestAssumeRole_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	creds, err := assumeRole(srv.URL, "arn:aws:iam::123456789012:role/test", "session", "jwt-token")
+	creds, err := assumeRole(mustParseURL(t, srv.URL), "arn:aws:iam::123456789012:role/test", "session", "jwt-token")
 	if err != nil {
 		t.Fatalf("assumeRole: %v", err)
 	}
@@ -77,7 +87,7 @@ func TestAssumeRole_VerifiesFormParams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := assumeRole(srv.URL, "arn:aws:iam::123456789012:role/test", "credctl-session", "my-jwt")
+	_, err := assumeRole(mustParseURL(t, srv.URL), "arn:aws:iam::123456789012:role/test", "credctl-session", "my-jwt")
 	if err != nil {
 		t.Fatalf("assumeRole: %v", err)
 	}
@@ -90,7 +100,7 @@ func TestAssumeRole_STSError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := assumeRole(srv.URL, "role", "session", "token")
+	_, err := assumeRole(mustParseURL(t, srv.URL), "role", "session", "token")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -109,7 +119,7 @@ func TestAssumeRole_NonXMLError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := assumeRole(srv.URL, "role", "session", "token")
+	_, err := assumeRole(mustParseURL(t, srv.URL), "role", "session", "token")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -125,7 +135,7 @@ func TestAssumeRole_InvalidXML(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := assumeRole(srv.URL, "role", "session", "token")
+	_, err := assumeRole(mustParseURL(t, srv.URL), "role", "session", "token")
 	if err == nil {
 		t.Fatal("expected error for invalid XML")
 	}
@@ -152,7 +162,7 @@ func TestAssumeRole_InvalidExpiration(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := assumeRole(srv.URL, "role", "session", "token")
+	_, err := assumeRole(mustParseURL(t, srv.URL), "role", "session", "token")
 	if err == nil {
 		t.Fatal("expected error for invalid expiration")
 	}
@@ -165,7 +175,7 @@ func TestAssumeRole_NetworkError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	srv.Close() // close immediately to cause connection error
 
-	_, err := assumeRole(srv.URL, "role", "session", "token")
+	_, err := assumeRole(mustParseURL(t, srv.URL), "role", "session", "token")
 	if err == nil {
 		t.Fatal("expected connection error")
 	}
@@ -185,7 +195,7 @@ func TestEndpointDefault(t *testing.T) {
 	defer srv.Close()
 
 	// Test the endpoint construction directly — empty region means default
-	creds, err := assumeRole(srv.URL, "role", "session", "token")
+	creds, err := assumeRole(mustParseURL(t, srv.URL), "role", "session", "token")
 	if err != nil {
 		t.Fatalf("assumeRole: %v", err)
 	}
@@ -209,7 +219,7 @@ func TestEndpointRegional(t *testing.T) {
 	// Verify the endpoint construction logic: region → sts.<region>.amazonaws.com
 	// We test this by calling assumeRole with the test server URL, confirming
 	// the function works regardless of endpoint.
-	creds, err := assumeRole(srv.URL, "arn:aws:iam::123456789012:role/test", "session", "token")
+	creds, err := assumeRole(mustParseURL(t, srv.URL), "arn:aws:iam::123456789012:role/test", "session", "token")
 	if err != nil {
 		t.Fatalf("assumeRole: %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -48,16 +49,17 @@ type stsError struct {
 
 // AssumeRoleWithWebIdentity calls STS to assume an IAM role using a JWT.
 func AssumeRoleWithWebIdentity(roleARN, sessionName, token, region string) (*Credentials, error) {
-	endpoint := "https://sts.amazonaws.com"
+	host := "sts.amazonaws.com"
 	if region != "" {
-		endpoint = fmt.Sprintf("https://sts.%s.amazonaws.com", region)
+		host = "sts." + region + ".amazonaws.com"
 	}
 
+	endpoint := &url.URL{Scheme: "https", Host: host}
 	return assumeRole(endpoint, roleARN, sessionName, token)
 }
 
 // assumeRole performs the actual STS AssumeRoleWithWebIdentity HTTP call.
-func assumeRole(endpoint, roleARN, sessionName, token string) (*Credentials, error) {
+func assumeRole(endpoint *url.URL, roleARN, sessionName, token string) (*Credentials, error) {
 	params := url.Values{
 		"Action":           {"AssumeRoleWithWebIdentity"},
 		"Version":          {"2011-06-15"},
@@ -66,7 +68,19 @@ func assumeRole(endpoint, roleARN, sessionName, token string) (*Credentials, err
 		"WebIdentityToken": {token},
 	}
 
-	resp, err := http.PostForm(endpoint, params)
+	encoded := params.Encode()
+	req := &http.Request{
+		Method: "POST",
+		URL:    endpoint,
+		Host:   endpoint.Host,
+		Header: http.Header{
+			"Content-Type": {"application/x-www-form-urlencoded"},
+		},
+		Body:          io.NopCloser(strings.NewReader(encoded)),
+		ContentLength: int64(len(encoded)),
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("STS request failed: %w", err)
 	}

@@ -32,7 +32,7 @@ var activeDeps = deps{
 var rootCmd = &cobra.Command{
 	Use:           "credctl",
 	Short:         "Manage credentials with machine identity",
-	Long:          "credctl uses the macOS Secure Enclave to create hardware-bound device identities for credential management.",
+	Long:          "credctl uses hardware security modules (macOS Secure Enclave, Linux TPM 2.0) to create hardware-bound device identities for credential management.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }

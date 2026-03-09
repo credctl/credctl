@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package enclave
 
@@ -15,17 +15,17 @@ func (e *stubEnclave) Available() bool {
 }
 
 func (e *stubEnclave) GenerateKey(tag string) (*DeviceKey, error) {
-	return nil, fmt.Errorf("Secure Enclave is only available on macOS")
+	return nil, fmt.Errorf("hardware enclave not available on this platform")
 }
 
 func (e *stubEnclave) LoadKey(tag string) (*DeviceKey, error) {
-	return nil, fmt.Errorf("Secure Enclave is only available on macOS")
+	return nil, fmt.Errorf("hardware enclave not available on this platform")
 }
 
 func (e *stubEnclave) DeleteKey(tag string) error {
-	return fmt.Errorf("Secure Enclave is only available on macOS")
+	return fmt.Errorf("hardware enclave not available on this platform")
 }
 
 func (e *stubEnclave) Sign(tag string, data []byte) ([]byte, error) {
-	return nil, fmt.Errorf("Secure Enclave is only available on macOS")
+	return nil, fmt.Errorf("hardware enclave not available on this platform")
 }
