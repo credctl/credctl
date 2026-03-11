@@ -4,28 +4,29 @@ package enclave
 
 import "fmt"
 
-type stubEnclave struct{}
+// stubBackend implements keyBackend for non-macOS platforms.
+type stubBackend struct{}
 
 func newPlatformEnclave() Enclave {
-	return &stubEnclave{}
+	return &enclaveImpl{backend: &stubBackend{}}
 }
 
-func (e *stubEnclave) Available() bool {
+func (b *stubBackend) available() bool {
 	return false
 }
 
-func (e *stubEnclave) GenerateKey(tag string) (*DeviceKey, error) {
+func (b *stubBackend) generateKey(tag string) ([]byte, error) {
 	return nil, fmt.Errorf("Secure Enclave is only available on macOS")
 }
 
-func (e *stubEnclave) LoadKey(tag string) (*DeviceKey, error) {
+func (b *stubBackend) lookupKey(tag string) ([]byte, error) {
 	return nil, fmt.Errorf("Secure Enclave is only available on macOS")
 }
 
-func (e *stubEnclave) DeleteKey(tag string) error {
+func (b *stubBackend) deleteKey(tag string) error {
 	return fmt.Errorf("Secure Enclave is only available on macOS")
 }
 
-func (e *stubEnclave) Sign(tag string, data []byte) ([]byte, error) {
+func (b *stubBackend) sign(tag string, data []byte) ([]byte, error) {
 	return nil, fmt.Errorf("Secure Enclave is only available on macOS")
 }

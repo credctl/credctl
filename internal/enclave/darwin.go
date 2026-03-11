@@ -206,34 +206,24 @@ static int signData(SecKeyRef privateKey, const void *data, int dataLen, void **
 import "C"
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/pem"
 	"fmt"
-	"math/big"
-	"time"
 	"unsafe"
 )
 
-type darwinEnclave struct{}
+// cgoBackend implements keyBackend using macOS Security framework via CGO.
+type cgoBackend struct{}
 
 func newPlatformEnclave() Enclave {
-	return &darwinEnclave{}
+	return &enclaveImpl{backend: &cgoBackend{}}
 }
 
-func (e *darwinEnclave) Available() bool {
-	// Try to look up a non-existent key. If the Security framework is accessible,
-	// even a "not found" result means the enclave is available.
+func (b *cgoBackend) available() bool {
 	tag := "com.crzy.credctl.probe"
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 
 	var keyRef C.SecKeyRef
 	errBuf := make([]byte, 256)
-	// We don't care about the result — just that the call doesn't crash.
 	C.lookupKey(cTag, C.int(len(tag)), &keyRef, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if keyRef != 0 {
 		C.CFRelease(C.CFTypeRef(keyRef))
@@ -241,7 +231,7 @@ func (e *darwinEnclave) Available() bool {
 	return true
 }
 
-func (e *darwinEnclave) GenerateKey(tag string) (*DeviceKey, error) {
+func (b *cgoBackend) generateKey(tag string) ([]byte, error) {
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 
@@ -254,20 +244,10 @@ func (e *darwinEnclave) GenerateKey(tag string) (*DeviceKey, error) {
 	}
 	defer C.CFRelease(C.CFTypeRef(privateKey))
 
-	pubPEM, fingerprint, err := extractPublicKey(privateKey)
-	if err != nil {
-		return nil, err
-	}
-
-	return &DeviceKey{
-		Fingerprint: fingerprint,
-		PublicKey:   pubPEM,
-		Tag:         tag,
-		CreatedAt:   time.Now(),
-	}, nil
+	return extractRawPublicKey(privateKey)
 }
 
-func (e *darwinEnclave) LoadKey(tag string) (*DeviceKey, error) {
+func (b *cgoBackend) lookupKey(tag string) ([]byte, error) {
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 
@@ -280,19 +260,10 @@ func (e *darwinEnclave) LoadKey(tag string) (*DeviceKey, error) {
 	}
 	defer C.CFRelease(C.CFTypeRef(keyRef))
 
-	pubPEM, fingerprint, err := extractPublicKey(keyRef)
-	if err != nil {
-		return nil, err
-	}
-
-	return &DeviceKey{
-		Fingerprint: fingerprint,
-		PublicKey:   pubPEM,
-		Tag:         tag,
-	}, nil
+	return extractRawPublicKey(keyRef)
 }
 
-func (e *darwinEnclave) DeleteKey(tag string) error {
+func (b *cgoBackend) deleteKey(tag string) error {
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 
@@ -304,11 +275,10 @@ func (e *darwinEnclave) DeleteKey(tag string) error {
 	return nil
 }
 
-func (e *darwinEnclave) Sign(tag string, data []byte) ([]byte, error) {
+func (b *cgoBackend) sign(tag string, data []byte) ([]byte, error) {
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 
-	// Look up the private key
 	var keyRef C.SecKeyRef
 	errBuf := make([]byte, 512)
 
@@ -327,60 +297,20 @@ func (e *darwinEnclave) Sign(tag string, data []byte) ([]byte, error) {
 	}
 	defer C.free(outSig)
 
-	sig := C.GoBytes(outSig, outSigLen)
-	return sig, nil
+	return C.GoBytes(outSig, outSigLen), nil
 }
 
-// extractPublicKey extracts the PEM-encoded public key and SHA-256 fingerprint from a SecKeyRef.
-func extractPublicKey(keyRef C.SecKeyRef) (pemBytes []byte, fingerprint string, err error) {
+// extractRawPublicKey extracts the raw uncompressed EC point bytes from a SecKeyRef.
+func extractRawPublicKey(keyRef C.SecKeyRef) ([]byte, error) {
 	var outBytes unsafe.Pointer
 	var outLen C.int
 	errBuf := make([]byte, 512)
 
 	rc := C.extractPublicKeyBytes(keyRef, &outBytes, &outLen, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if rc != 0 {
-		return nil, "", fmt.Errorf("failed to extract public key: %s", cGoString(errBuf))
+		return nil, fmt.Errorf("failed to extract public key: %s", cGoString(errBuf))
 	}
 	defer C.free(outBytes)
 
-	rawBytes := C.GoBytes(outBytes, outLen)
-
-	// rawBytes is the uncompressed EC point: 0x04 || x || y (65 bytes for P-256)
-	if len(rawBytes) != 65 || rawBytes[0] != 0x04 {
-		return nil, "", fmt.Errorf("unexpected public key format: %d bytes", len(rawBytes))
-	}
-
-	x := new(big.Int).SetBytes(rawBytes[1:33])
-	y := new(big.Int).SetBytes(rawBytes[33:65])
-
-	pubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     x,
-		Y:     y,
-	}
-
-	derBytes, err := x509.MarshalPKIXPublicKey(pubKey)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to marshal public key: %w", err)
-	}
-
-	pemBlock := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: derBytes,
-	})
-
-	hash := sha256.Sum256(derBytes)
-	fp := "SHA256:" + base64.StdEncoding.EncodeToString(hash[:])
-
-	return pemBlock, fp, nil
-}
-
-// cGoString converts a null-terminated C string in a Go byte slice to a Go string.
-func cGoString(buf []byte) string {
-	for i, b := range buf {
-		if b == 0 {
-			return string(buf[:i])
-		}
-	}
-	return string(buf)
+	return C.GoBytes(outBytes, outLen), nil
 }
