@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -80,7 +82,9 @@ func runAuth(cmd *cobra.Command, args []string) error {
 
 	// Call STS — session name must match [\w+=,.@-]*
 	fingerprint := strings.TrimPrefix(cfg.DeviceID, "SHA256:")
-	sessionName := "credctl-" + fingerprint[:8]
+	randBytes := make([]byte, 4)
+	_, _ = rand.Read(randBytes)
+	sessionName := "credctl-" + fingerprint[:8] + "-" + hex.EncodeToString(randBytes)
 	fmt.Fprintln(os.Stderr, "Requesting temporary credentials from AWS STS...")
 	creds, err := activeDeps.assumeRole(cfg.AWS.RoleARN, sessionName, token, cfg.AWS.Region)
 	if err != nil {

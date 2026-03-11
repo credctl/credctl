@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -69,11 +70,21 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
+		return nil, err
+	}
+
+	// Warn if config file is readable by group or others
+	if perm := info.Mode().Perm(); perm&0077 != 0 {
+		fmt.Fprintf(os.Stderr, "Warning: %s has permissions %o, expected 0600 — run: chmod 600 %s\n", path, perm, path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return nil, err
 	}
 

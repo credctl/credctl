@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,18 @@ func init() {
 }
 
 func runOIDCGenerate(cmd *cobra.Command, args []string) error {
+	// Validate issuer URL
+	parsed, err := url.Parse(oidcIssuerURL)
+	if err != nil {
+		return fmt.Errorf("invalid issuer URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("issuer URL must use HTTPS (got %q)", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("issuer URL must include a hostname")
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)

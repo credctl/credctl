@@ -1,10 +1,12 @@
 package jwt
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -29,6 +31,7 @@ type claims struct {
 	Aud string `json:"aud"`
 	Iat int64  `json:"iat"`
 	Exp int64  `json:"exp"`
+	Jti string `json:"jti"`
 }
 
 // BuildAndSign constructs a JWT with ES256 signing via the provided SigningFunc.
@@ -37,6 +40,11 @@ type claims struct {
 func BuildAndSign(kid, issuer, subject string, sign SigningFunc) (string, error) {
 	now := time.Now()
 
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("generate nonce: %w", err)
+	}
+
 	h := header{Alg: "ES256", Typ: "JWT", Kid: kid}
 	c := claims{
 		Iss: issuer,
@@ -44,6 +52,7 @@ func BuildAndSign(kid, issuer, subject string, sign SigningFunc) (string, error)
 		Aud: "sts.amazonaws.com",
 		Iat: now.Unix(),
 		Exp: now.Add(5 * time.Minute).Unix(),
+		Jti: hex.EncodeToString(nonce),
 	}
 
 	headerJSON, err := json.Marshal(h)

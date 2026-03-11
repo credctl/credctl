@@ -73,8 +73,13 @@ func buildDeviceKey(tag string, rawBytes []byte) (*DeviceKey, error) {
 	x := new(big.Int).SetBytes(rawBytes[1:33])
 	y := new(big.Int).SetBytes(rawBytes[33:65])
 
+	curve := elliptic.P256()
+	if !curve.IsOnCurve(x, y) {
+		return nil, fmt.Errorf("public key point is not on P-256 curve")
+	}
+
 	pubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
+		Curve: curve,
 		X:     x,
 		Y:     y,
 	}

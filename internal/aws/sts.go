@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"crypto/tls"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -8,6 +9,16 @@ import (
 	"net/url"
 	"time"
 )
+
+// stsClient is an HTTP client configured for STS calls with TLS 1.2+ and timeouts.
+var stsClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+	},
+}
 
 // Credentials holds temporary AWS credentials from STS.
 type Credentials struct {
@@ -66,7 +77,7 @@ func assumeRole(endpoint, roleARN, sessionName, token string) (*Credentials, err
 		"WebIdentityToken": {token},
 	}
 
-	resp, err := http.PostForm(endpoint, params)
+	resp, err := stsClient.PostForm(endpoint, params)
 	if err != nil {
 		return nil, fmt.Errorf("STS request failed: %w", err)
 	}

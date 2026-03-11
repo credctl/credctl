@@ -134,6 +134,21 @@ func TestBuildDeviceKey_WrongPrefix(t *testing.T) {
 	}
 }
 
+func TestBuildDeviceKey_NotOnCurve(t *testing.T) {
+	// 65 bytes with correct prefix but invalid curve point
+	raw := make([]byte, 65)
+	raw[0] = 0x04
+	raw[1] = 0xFF // arbitrary x,y that won't be on P-256
+	raw[33] = 0xFF
+	_, err := buildDeviceKey("tag", raw)
+	if err == nil {
+		t.Fatal("expected error for point not on curve")
+	}
+	if !strings.Contains(err.Error(), "not on P-256 curve") {
+		t.Errorf("error = %q, want 'not on P-256 curve'", err)
+	}
+}
+
 func TestBuildDeviceKey_EmptyInput(t *testing.T) {
 	_, err := buildDeviceKey("tag", nil)
 	if err == nil {
