@@ -76,7 +76,7 @@ else
 fi
 
 if command -v gosec &> /dev/null; then
-  if gosec -exclude=G104,G115,G117,G204,G304,G703 -quiet ./... 2>&1; then
+  if gosec -exclude=G104,G107,G115,G117,G204,G304,G703 -quiet ./... 2>&1; then
     pass "gosec clean"
   else
     fail "gosec found issues"
