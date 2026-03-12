@@ -146,8 +146,8 @@ func runSetupAWS(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("oidc publish: %w", err)
 	}
 
-	fmt.Println("\nAWS setup complete. Configure your AWS CLI:")
-	fmt.Printf("  echo '[profile credctl]\ncredential_process = credctl auth' >> ~/.aws/config\n")
+	fmt.Println("\nAWS setup complete. Configure your AWS CLI profile:")
+	fmt.Println("  credctl setup aws-profile")
 
 	return nil
 }
