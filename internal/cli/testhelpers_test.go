@@ -88,6 +88,7 @@ func testDeps(enc enclave.Enclave) deps {
 				Expiration:     time.Now().Add(1 * time.Hour),
 			}, nil
 		},
+		lookPath: func(name string) (string, error) { return "/usr/local/bin/" + name, nil },
 	}
 }
 

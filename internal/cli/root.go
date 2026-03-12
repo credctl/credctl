@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/credctl/credctl/internal/aws"
 	"github.com/credctl/credctl/internal/config"
@@ -18,6 +19,7 @@ type deps struct {
 	configDir     func() (string, error)
 	publicKeyPath func() (string, error)
 	assumeRole    func(string, string, string, string) (*aws.Credentials, error)
+	lookPath      func(string) (string, error)
 }
 
 var activeDeps = deps{
@@ -27,6 +29,7 @@ var activeDeps = deps{
 	configDir:     config.ConfigDir,
 	publicKeyPath: config.PublicKeyPath,
 	assumeRole:    aws.AssumeRoleWithWebIdentity,
+	lookPath:      exec.LookPath,
 }
 
 var rootCmd = &cobra.Command{

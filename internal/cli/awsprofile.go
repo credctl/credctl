@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -49,7 +48,7 @@ func runSetupAWSProfile(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve credctl binary path
-	credctlPath, err := exec.LookPath("credctl")
+	credctlPath, err := activeDeps.lookPath("credctl")
 	if err != nil {
 		return fmt.Errorf("credctl not found in PATH: %w", err)
 	}
