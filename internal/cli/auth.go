@@ -164,7 +164,7 @@ func runAuthGCP(cfg *config.Config) error {
 	case "executable":
 		// Output the signed JWT in GCP executable credential format.
 		// The GCP client library handles the STS exchange itself.
-		out := executableOutput{
+		out := executableOutput{ //nolint:gosec // G101: not hardcoded credentials — this is the output structure
 			Version:        1,
 			Success:        true,
 			TokenType:      "urn:ietf:params:oauth:token-type:jwt",
