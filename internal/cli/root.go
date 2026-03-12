@@ -8,6 +8,7 @@ import (
 	"github.com/credctl/credctl/internal/aws"
 	"github.com/credctl/credctl/internal/config"
 	"github.com/credctl/credctl/internal/enclave"
+	"github.com/credctl/credctl/internal/gcp"
 	"github.com/spf13/cobra"
 )
 
@@ -18,18 +19,22 @@ type deps struct {
 	saveConfig    func(*config.Config) error
 	configDir     func() (string, error)
 	publicKeyPath func() (string, error)
-	assumeRole    func(string, string, string, string) (*aws.Credentials, error)
-	lookPath      func(string) (string, error)
+	assumeRole             func(string, string, string, string) (*aws.Credentials, error)
+	lookPath               func(string) (string, error)
+	gcpExchangeToken       func(string, string) (*gcp.FederatedToken, error)
+	gcpGenerateAccessToken func(string, string, []string) (*gcp.AccessToken, error)
 }
 
 var activeDeps = deps{
-	newEnclave:    func() enclave.Enclave { return enclave.New() },
-	loadConfig:    config.Load,
-	saveConfig:    config.Save,
-	configDir:     config.ConfigDir,
-	publicKeyPath: config.PublicKeyPath,
-	assumeRole:    aws.AssumeRoleWithWebIdentity,
-	lookPath:      exec.LookPath,
+	newEnclave:             func() enclave.Enclave { return enclave.New() },
+	loadConfig:             config.Load,
+	saveConfig:             config.Save,
+	configDir:              config.ConfigDir,
+	publicKeyPath:          config.PublicKeyPath,
+	assumeRole:             aws.AssumeRoleWithWebIdentity,
+	lookPath:               exec.LookPath,
+	gcpExchangeToken:       gcp.ExchangeToken,
+	gcpGenerateAccessToken: gcp.GenerateAccessToken,
 }
 
 var rootCmd = &cobra.Command{

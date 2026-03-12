@@ -172,7 +172,7 @@ func TestBuildAndSign(t *testing.T) {
 		return ecdsa.SignASN1(rand.Reader, priv, hash[:])
 	}
 
-	token, err := BuildAndSign("test-kid", "https://example.com", "device-123", signFn)
+	token, err := BuildAndSign("test-kid", "https://example.com", "device-123", "sts.amazonaws.com", signFn)
 	if err != nil {
 		t.Fatalf("BuildAndSign: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestBuildAndSign_SignError(t *testing.T) {
 		return nil, fmt.Errorf("hardware error")
 	}
 
-	_, err := BuildAndSign("kid", "iss", "sub", signFn)
+	_, err := BuildAndSign("kid", "iss", "sub", "aud", signFn)
 	if err == nil {
 		t.Fatal("expected error when signing fails")
 	}
@@ -264,7 +264,7 @@ func TestBuildAndSign_InvalidDERSignature(t *testing.T) {
 		return []byte("not a DER signature"), nil
 	}
 
-	_, err := BuildAndSign("kid", "iss", "sub", signFn)
+	_, err := BuildAndSign("kid", "iss", "sub", "aud", signFn)
 	if err == nil {
 		t.Fatal("expected error for invalid DER signature")
 	}
