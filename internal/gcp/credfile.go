@@ -29,7 +29,7 @@ type executableConfig struct {
 
 // GenerateCredentialConfig builds the external credential config JSON structure.
 func GenerateCredentialConfig(credctlPath, audience, serviceAccountEmail string) *ExternalCredentialConfig {
-	return &ExternalCredentialConfig{ //nolint:gosec // G101: not hardcoded credentials — this is a config template
+	return &ExternalCredentialConfig{ // #nosec G101 -- not hardcoded credentials, this is a config template
 		Type:             "external_account",
 		Audience:         audience,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
