@@ -24,6 +24,22 @@ type AWSConfig struct {
 	S3Bucket  string `json:"s3_bucket,omitempty"`
 }
 
+// GCPConfig holds optional GCP authentication settings.
+type GCPConfig struct {
+	ProjectNumber       string `json:"project_number"`
+	WorkloadPoolID      string `json:"workload_pool_id"`
+	ProviderID          string `json:"provider_id"`
+	ServiceAccountEmail string `json:"service_account_email"`
+	IssuerURL           string `json:"issuer_url"`
+	CredentialFilePath  string `json:"credential_file_path,omitempty"`
+}
+
+// Audience returns the GCP Workload Identity Provider audience string.
+func (g *GCPConfig) Audience() string {
+	return fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s",
+		g.ProjectNumber, g.WorkloadPoolID, g.ProviderID)
+}
+
 // Config represents the persisted device identity configuration.
 type Config struct {
 	Version       int        `json:"version"`
@@ -33,6 +49,7 @@ type Config struct {
 	EnclaveType   string     `json:"enclave_type"`
 	PublicKeyPath string     `json:"public_key_path"`
 	AWS           *AWSConfig `json:"aws,omitempty"`
+	GCP           *GCPConfig `json:"gcp,omitempty"`
 }
 
 // ConfigDir returns the path to ~/.credctl.

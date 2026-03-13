@@ -37,7 +37,7 @@ type claims struct {
 // BuildAndSign constructs a JWT with ES256 signing via the provided SigningFunc.
 // The SigningFunc receives the raw signing input (header.payload) and must return
 // a DER-encoded ECDSA signature (as produced by the Secure Enclave).
-func BuildAndSign(kid, issuer, subject string, sign SigningFunc) (string, error) {
+func BuildAndSign(kid, issuer, subject, audience string, sign SigningFunc) (string, error) {
 	now := time.Now()
 
 	nonce := make([]byte, 16)
@@ -49,7 +49,7 @@ func BuildAndSign(kid, issuer, subject string, sign SigningFunc) (string, error)
 	c := claims{
 		Iss: issuer,
 		Sub: subject,
-		Aud: "sts.amazonaws.com",
+		Aud: audience,
 		Iat: now.Unix(),
 		Exp: now.Add(5 * time.Minute).Unix(),
 		Jti: hex.EncodeToString(nonce),
