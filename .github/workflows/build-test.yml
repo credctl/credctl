@@ -1,0 +1,112 @@
+name: Build Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build (SHA, branch, or tag)"
+        required: true
+        default: "main"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.7"
+
+      - name: Determine version label
+        id: version
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "VERSION=test-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Import signing certificate
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          CERT_PATH=$RUNNER_TEMP/certificate.p12
+
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "" "$KEYCHAIN_PATH"
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+      - name: Fetch signing artifacts
+        env:
+          SIGNING_REPO_TOKEN: ${{ secrets.SIGNING_REPO_TOKEN }}
+        run: |
+          git clone https://x-access-token:${SIGNING_REPO_TOKEN}@github.com/credctl/apple-signing.git $RUNNER_TEMP/apple-signing
+
+      - name: Install provisioning profile
+        env:
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          echo "$APPLE_PROVISIONING_PROFILE" | base64 --decode > $RUNNER_TEMP/apple-signing/embedded.provisionprofile
+
+      - name: Build
+        run: |
+          make build \
+            VERSION=${{ steps.version.outputs.VERSION }} \
+            SIGNING_IDENTITY="${{ secrets.APPLE_SIGNING_IDENTITY }}" \
+            SIGNING_DIR=$RUNNER_TEMP/apple-signing
+
+      - name: Notarize
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ZIP_PATH=$RUNNER_TEMP/credctl.zip
+          ditto -c -k --keepParent build/credctl.app "$ZIP_PATH"
+
+          xcrun notarytool submit "$ZIP_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --timeout 30m
+
+          xcrun stapler staple build/credctl.app
+
+      - name: Package
+        run: make package VERSION=${{ steps.version.outputs.VERSION }} SIGNING_DIR=$RUNNER_TEMP/apple-signing
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: credctl-${{ steps.version.outputs.VERSION }}-darwin-arm64
+          path: |
+            dist/credctl-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz
+            dist/checksums.txt
+          retention-days: 14
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain $RUNNER_TEMP/signing.keychain-db || true
