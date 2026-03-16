@@ -319,7 +319,7 @@ func (s *Server) handleGCPCredentials(w http.ResponseWriter, format string) {
 	switch format {
 	case "executable":
 		expiresAt = time.Now().Add(5 * time.Minute)
-		out := executableOutput{
+		out := executableOutput{ // #nosec G101 -- not hardcoded credentials, this is the output structure
 			Version:        1,
 			Success:        true,
 			TokenType:      "urn:ietf:params:oauth:token-type:jwt",
