@@ -14,7 +14,7 @@ import (
 // mockEnclave implements enclave.Enclave for testing.
 type mockEnclave struct {
 	available    bool
-	generateKey  func(tag string) (*enclave.DeviceKey, error)
+	generateKey  func(tag string, biometric enclave.BiometricPolicy) (*enclave.DeviceKey, error)
 	loadKey      func(tag string) (*enclave.DeviceKey, error)
 	deleteKey    func(tag string) error
 	sign         func(tag string, data []byte) ([]byte, error)
@@ -22,15 +22,16 @@ type mockEnclave struct {
 
 func (m *mockEnclave) Available() bool { return m.available }
 
-func (m *mockEnclave) GenerateKey(tag string) (*enclave.DeviceKey, error) {
+func (m *mockEnclave) GenerateKey(tag string, biometric enclave.BiometricPolicy) (*enclave.DeviceKey, error) {
 	if m.generateKey != nil {
-		return m.generateKey(tag)
+		return m.generateKey(tag, biometric)
 	}
 	return &enclave.DeviceKey{
 		Fingerprint: "SHA256:testfp123456",
 		PublicKey:   []byte("-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----\n"),
 		Tag:         tag,
 		CreatedAt:   time.Now(),
+		Biometric:   biometric,
 	}, nil
 }
 

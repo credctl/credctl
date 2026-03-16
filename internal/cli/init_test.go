@@ -23,6 +23,7 @@ func TestRunInit_Fresh(t *testing.T) {
 	// Reset flags for test
 	initForce = false
 	initKeyTag = config.DefaultKeyTag
+	initBiometric = "any"
 
 	err := runInit(nil, nil)
 	if err != nil {
@@ -63,6 +64,7 @@ func TestRunInit_AlreadyExists_WithForce(t *testing.T) {
 
 	initForce = true
 	initKeyTag = config.DefaultKeyTag
+	initBiometric = "any"
 	defer func() { initForce = false }()
 
 	err := runInit(nil, nil)
@@ -94,7 +96,7 @@ func TestRunInit_EnclaveNotAvailable(t *testing.T) {
 func TestRunInit_KeyGenerationFails(t *testing.T) {
 	mock := &mockEnclave{
 		available: true,
-		generateKey: func(tag string) (*enclave.DeviceKey, error) {
+		generateKey: func(tag string, biometric enclave.BiometricPolicy) (*enclave.DeviceKey, error) {
 			return nil, errMock("hardware failure")
 		},
 	}
@@ -107,6 +109,7 @@ func TestRunInit_KeyGenerationFails(t *testing.T) {
 
 	initForce = false
 	initKeyTag = config.DefaultKeyTag
+	initBiometric = "any"
 
 	err := runInit(nil, nil)
 	if err == nil {
@@ -129,6 +132,7 @@ func TestRunInit_ConfigSaveError(t *testing.T) {
 
 	initForce = false
 	initKeyTag = config.DefaultKeyTag
+	initBiometric = "any"
 
 	// Create the dir so MkdirAll doesn't fail
 	os.MkdirAll(tmpDir, 0700)

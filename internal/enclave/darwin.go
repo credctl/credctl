@@ -11,9 +11,10 @@ package enclave
 #include <string.h>
 
 // generateSecureEnclaveKey creates an ECDSA P-256 key pair in the Secure Enclave.
+// biometricPolicy: 0 = none, 1 = any (UserPresence), 2 = fingerprint (BiometryCurrentSet)
 // On success, returns the SecKeyRef for the private key via *outKey and 0.
 // On failure, returns non-zero and writes an error description to errBuf.
-static int generateSecureEnclaveKey(const char *tag, int tagLen, SecKeyRef *outKey, char *errBuf, int errBufLen) {
+static int generateSecureEnclaveKey(const char *tag, int tagLen, int biometricPolicy, SecKeyRef *outKey, char *errBuf, int errBufLen) {
     CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 
@@ -27,11 +28,19 @@ static int generateSecureEnclaveKey(const char *tag, int tagLen, SecKeyRef *outK
     CFDictionarySetValue(attrs, kSecAttrTokenID, kSecAttrTokenIDSecureEnclave);
 
     // Access control — required for Secure Enclave keys
+    // Determine flags based on biometric policy
+    SecAccessControlCreateFlags acFlags = kSecAccessControlPrivateKeyUsage;
+    if (biometricPolicy == 1) {
+        acFlags = kSecAccessControlPrivateKeyUsage | kSecAccessControlUserPresence;
+    } else if (biometricPolicy == 2) {
+        acFlags = kSecAccessControlPrivateKeyUsage | kSecAccessControlBiometryCurrentSet;
+    }
+
     CFErrorRef acError = NULL;
     SecAccessControlRef access = SecAccessControlCreateWithFlags(
         kCFAllocatorDefault,
         kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        kSecAccessControlPrivateKeyUsage,
+        acFlags,
         &acError);
     if (access == NULL) {
         if (acError != NULL) {
@@ -231,14 +240,25 @@ func (b *cgoBackend) available() bool {
 	return true
 }
 
-func (b *cgoBackend) generateKey(tag string) ([]byte, error) {
+func (b *cgoBackend) generateKey(tag string, biometric BiometricPolicy) ([]byte, error) {
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
+
+	// Map BiometricPolicy to C int: 0=none, 1=any, 2=fingerprint
+	var bPolicy C.int
+	switch biometric {
+	case BiometricAny:
+		bPolicy = 1
+	case BiometricFingerprint:
+		bPolicy = 2
+	default:
+		bPolicy = 0
+	}
 
 	var privateKey C.SecKeyRef
 	errBuf := make([]byte, 512)
 
-	rc := C.generateSecureEnclaveKey(cTag, C.int(len(tag)), &privateKey, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
+	rc := C.generateSecureEnclaveKey(cTag, C.int(len(tag)), bPolicy, &privateKey, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if rc != 0 {
 		return nil, fmt.Errorf("secure enclave key generation failed: %s", cGoString(errBuf))
 	}

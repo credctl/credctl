@@ -6,12 +6,14 @@ import (
 	"time"
 
 	"github.com/credctl/credctl/internal/config"
+	"github.com/credctl/credctl/internal/enclave"
 	"github.com/spf13/cobra"
 )
 
 var (
-	initForce  bool
-	initKeyTag string
+	initForce     bool
+	initKeyTag    string
+	initBiometric string
 )
 
 var initCmd = &cobra.Command{
@@ -23,6 +25,7 @@ var initCmd = &cobra.Command{
 func init() {
 	initCmd.Flags().BoolVar(&initForce, "force", false, "Delete existing key and reinitialise")
 	initCmd.Flags().StringVar(&initKeyTag, "key-tag", config.DefaultKeyTag, "Override the keychain application tag")
+	initCmd.Flags().StringVar(&initBiometric, "biometric", "any", "Biometric policy for signing: any, fingerprint, none")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -41,6 +44,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Validate biometric flag
+	biometric := enclave.BiometricPolicy(initBiometric)
+	switch biometric {
+	case enclave.BiometricAny, enclave.BiometricFingerprint, enclave.BiometricNone:
+		// valid
+	default:
+		return fmt.Errorf("invalid --biometric value %q: must be any, fingerprint, or none", initBiometric)
+	}
+
 	// Check Secure Enclave availability
 	enc := activeDeps.newEnclave()
 	if !enc.Available() {
@@ -57,7 +69,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Generate key
 	fmt.Println("Generating Secure Enclave key pair...")
-	key, err := enc.GenerateKey(initKeyTag)
+	key, err := enc.GenerateKey(initKeyTag, biometric)
 	if err != nil {
 		return fmt.Errorf("key generation failed: %w", err)
 	}
@@ -89,6 +101,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		CreatedAt:     key.CreatedAt,
 		EnclaveType:   "secure_enclave",
 		PublicKeyPath: "~/.credctl/device.pub",
+		Biometric:     string(biometric),
 	}
 
 	if err := activeDeps.saveConfig(newCfg); err != nil {
@@ -100,8 +113,23 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("\u2713 Device identity created (Secure Enclave)")
 	fmt.Printf("  Fingerprint: %s\n", key.Fingerprint)
 	fmt.Printf("  Public key:  %s\n", pubKeyPath)
+	fmt.Printf("  Biometric:   %s\n", biometricLabel(string(biometric)))
 	fmt.Println()
 	fmt.Println("  Next: Register this public key with your cloud provider or credctl broker.")
 
 	return nil
+}
+
+// biometricLabel returns a human-readable label for a biometric policy value.
+func biometricLabel(b string) string {
+	switch b {
+	case "any":
+		return "Touch ID + passcode"
+	case "fingerprint":
+		return "Touch ID only"
+	case "none":
+		return "none"
+	default:
+		return "none (legacy)"
+	}
 }
