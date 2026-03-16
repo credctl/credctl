@@ -51,7 +51,7 @@ func FetchCredentials(socketPath, provider, format string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 	if err != nil {
 		return nil, fmt.Errorf("read daemon response: %w", err)
 	}
@@ -79,7 +79,7 @@ func FetchStatus(socketPath string) (*StatusResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 	if err != nil {
 		return nil, fmt.Errorf("read daemon response: %w", err)
 	}

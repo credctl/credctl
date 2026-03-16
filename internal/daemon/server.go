@@ -9,8 +9,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/credctl/credctl/internal/aws"
@@ -60,12 +62,30 @@ func NewServer(socketPath, pidFilePath string, idleTimeout time.Duration, deps S
 	mux.HandleFunc("GET /v1/status", s.handleStatus)
 	mux.HandleFunc("POST /v1/clear", s.handleClear)
 
-	s.srv = &http.Server{Handler: mux}
+	s.srv = &http.Server{
+		Handler:        mux,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   65 * time.Second, // allow for Touch ID prompt during credential fetch
+		MaxHeaderBytes: 1 << 16,          // 64KB
+	}
 	return s
 }
 
 // Start begins listening on the Unix socket and serving requests.
 func (s *Server) Start() error {
+	// Verify parent directory permissions. The socket lives inside ~/.credctl/
+	// which must be user-only (0700). Combined with the 0600 socket permissions
+	// set via umask below, this provides filesystem-based peer access control
+	// without requiring platform-specific SO_PEERCRED/LOCAL_PEERCRED checks.
+	dir := filepath.Dir(s.socketPath)
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("stat config dir: %w", err)
+	}
+	if perm := info.Mode().Perm(); perm&0077 != 0 {
+		return fmt.Errorf("config directory %s has permissions %04o, expected 0700 — run: chmod 700 %s", dir, perm, dir)
+	}
+
 	// Remove stale socket file if it exists.
 	_ = os.Remove(s.socketPath)
 
@@ -73,17 +93,14 @@ func (s *Server) Start() error {
 		return err
 	}
 
+	// Set umask to 0177 so the socket is created with 0600 from the start,
+	// eliminating the TOCTOU window between Listen and a separate Chmod.
+	oldMask := syscall.Umask(0177)
 	ln, err := net.Listen("unix", s.socketPath)
+	syscall.Umask(oldMask)
 	if err != nil {
 		RemovePIDFile(s.pidFilePath)
 		return fmt.Errorf("listen on %s: %w", s.socketPath, err)
-	}
-
-	// Set socket permissions to user-only.
-	if err := os.Chmod(s.socketPath, 0600); err != nil {
-		ln.Close()
-		RemovePIDFile(s.pidFilePath)
-		return fmt.Errorf("chmod socket: %w", err)
 	}
 
 	s.listener = ln
@@ -148,13 +165,13 @@ func (s *Server) handleCredentials(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleGCPCredentials(w, format)
 	default:
-		http.Error(w, fmt.Sprintf(`{"error":"unknown provider: %s"}`, provider), http.StatusBadRequest)
+		jsonError(w, fmt.Sprintf("unknown provider: %s", provider), http.StatusBadRequest)
 	}
 }
 
 func (s *Server) handleAWSCredentials(w http.ResponseWriter, format string) {
 	if format != "credential_process" && format != "env" {
-		http.Error(w, `{"error":"unknown format"}`, http.StatusBadRequest)
+		jsonError(w, "unknown format", http.StatusBadRequest)
 		return
 	}
 
@@ -183,19 +200,21 @@ func (s *Server) handleAWSCredentials(w http.ResponseWriter, format string) {
 
 	cfg, err := s.deps.LoadConfig()
 	if err != nil || cfg == nil || cfg.AWS == nil {
-		http.Error(w, `{"error":"AWS not configured"}`, http.StatusBadRequest)
+		jsonError(w, "AWS not configured", http.StatusBadRequest)
 		return
 	}
 
 	kid, signFn, err := s.prepareSign(cfg)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		fmt.Fprintf(os.Stderr, "prepareSign: %v\n", err)
+		jsonError(w, "authentication failed", http.StatusInternalServerError)
 		return
 	}
 
 	token, err := jwt.BuildAndSign(kid, cfg.AWS.IssuerURL, cfg.DeviceID, "sts.amazonaws.com", signFn)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"build JWT: %s"}`, err.Error()), http.StatusInternalServerError)
+		fmt.Fprintf(os.Stderr, "build JWT: %v\n", err)
+		jsonError(w, "authentication failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -206,7 +225,8 @@ func (s *Server) handleAWSCredentials(w http.ResponseWriter, format string) {
 
 	creds, err := s.deps.AssumeRole(cfg.AWS.RoleARN, sessionName, token, cfg.AWS.Region)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"assume role: %s"}`, err.Error()), http.StatusInternalServerError)
+		fmt.Fprintf(os.Stderr, "assume role: %v\n", err)
+		jsonError(w, "credential exchange failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -244,7 +264,7 @@ func (s *Server) handleAWSCredentials(w http.ResponseWriter, format string) {
 
 func (s *Server) handleGCPCredentials(w http.ResponseWriter, format string) {
 	if format != "executable" && format != "env" {
-		http.Error(w, `{"error":"unknown format"}`, http.StatusBadRequest)
+		jsonError(w, "unknown format", http.StatusBadRequest)
 		return
 	}
 
@@ -273,13 +293,14 @@ func (s *Server) handleGCPCredentials(w http.ResponseWriter, format string) {
 
 	cfg, err := s.deps.LoadConfig()
 	if err != nil || cfg == nil || cfg.GCP == nil {
-		http.Error(w, `{"error":"GCP not configured"}`, http.StatusBadRequest)
+		jsonError(w, "GCP not configured", http.StatusBadRequest)
 		return
 	}
 
 	kid, signFn, err := s.prepareSign(cfg)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		fmt.Fprintf(os.Stderr, "prepareSign: %v\n", err)
+		jsonError(w, "authentication failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -287,7 +308,8 @@ func (s *Server) handleGCPCredentials(w http.ResponseWriter, format string) {
 
 	token, err := jwt.BuildAndSign(kid, cfg.GCP.IssuerURL, cfg.DeviceID, audience, signFn)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"build JWT: %s"}`, err.Error()), http.StatusInternalServerError)
+		fmt.Fprintf(os.Stderr, "build JWT: %v\n", err)
+		jsonError(w, "authentication failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -309,7 +331,8 @@ func (s *Server) handleGCPCredentials(w http.ResponseWriter, format string) {
 	case "env":
 		fedToken, err := s.deps.GCPExchangeToken(audience, token)
 		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"token exchange: %s"}`, err.Error()), http.StatusInternalServerError)
+			fmt.Fprintf(os.Stderr, "token exchange: %v\n", err)
+			jsonError(w, "credential exchange failed", http.StatusInternalServerError)
 			return
 		}
 		accessToken, err := s.deps.GCPGenerateAccessToken(
@@ -318,7 +341,8 @@ func (s *Server) handleGCPCredentials(w http.ResponseWriter, format string) {
 			[]string{"https://www.googleapis.com/auth/cloud-platform"},
 		)
 		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"generate access token: %s"}`, err.Error()), http.StatusInternalServerError)
+			fmt.Fprintf(os.Stderr, "generate access token: %v\n", err)
+			jsonError(w, "credential exchange failed", http.StatusInternalServerError)
 			return
 		}
 		expiresAt = accessToken.ExpireTime
@@ -383,6 +407,14 @@ func (s *Server) prepareSign(cfg *config.Config) (string, jwt.SigningFunc, error
 
 	signFn := s.deps.NewSignFn(cfg.KeyTag)
 	return kid, signFn, nil
+}
+
+// jsonError writes a properly JSON-encoded error response and sets the Content-Type header.
+func jsonError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	data, _ := json.Marshal(map[string]string{"error": msg})
+	w.Write(data)
 }
 
 // Response types for the daemon API.

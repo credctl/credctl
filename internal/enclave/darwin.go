@@ -29,11 +29,14 @@ static int generateSecureEnclaveKey(const char *tag, int tagLen, int biometricPo
 
     // Access control — required for Secure Enclave keys
     // Determine flags based on biometric policy
-    SecAccessControlCreateFlags acFlags = kSecAccessControlPrivateKeyUsage;
-    if (biometricPolicy == 1) {
-        acFlags = kSecAccessControlPrivateKeyUsage | kSecAccessControlUserPresence;
+    SecAccessControlCreateFlags acFlags;
+    if (biometricPolicy == 0) {
+        acFlags = kSecAccessControlPrivateKeyUsage;
     } else if (biometricPolicy == 2) {
         acFlags = kSecAccessControlPrivateKeyUsage | kSecAccessControlBiometryCurrentSet;
+    } else {
+        // Default: require user presence (fail-closed)
+        acFlags = kSecAccessControlPrivateKeyUsage | kSecAccessControlUserPresence;
     }
 
     CFErrorRef acError = NULL;
@@ -119,6 +122,11 @@ static int extractPublicKeyBytes(SecKeyRef privateKey, void **outBytes, int *out
 
     CFIndex len = CFDataGetLength(pubData);
     void *buf = malloc(len);
+    if (buf == NULL) {
+        CFRelease(pubData);
+        snprintf(errBuf, errBufLen, "malloc failed for public key");
+        return -1;
+    }
     memcpy(buf, CFDataGetBytePtr(pubData), len);
     CFRelease(pubData);
 
@@ -204,6 +212,11 @@ static int signData(SecKeyRef privateKey, const void *data, int dataLen, void **
 
     CFIndex len = CFDataGetLength(signature);
     void *buf = malloc(len);
+    if (buf == NULL) {
+        CFRelease(signature);
+        snprintf(errBuf, errBufLen, "malloc failed for signature");
+        return -1;
+    }
     memcpy(buf, CFDataGetBytePtr(signature), len);
     CFRelease(signature);
 
@@ -252,7 +265,7 @@ func (b *cgoBackend) generateKey(tag string, biometric BiometricPolicy) ([]byte,
 	case BiometricFingerprint:
 		bPolicy = 2
 	default:
-		bPolicy = 0
+		bPolicy = 1
 	}
 
 	var privateKey C.SecKeyRef
@@ -296,6 +309,10 @@ func (b *cgoBackend) deleteKey(tag string) error {
 }
 
 func (b *cgoBackend) sign(tag string, data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("cannot sign empty data")
+	}
+
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 
