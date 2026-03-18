@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/credctl/credctl/internal/config"
@@ -48,14 +47,14 @@ func runSetupGCP(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check gcloud is available
-	if _, err := exec.LookPath("gcloud"); err != nil {
+	if _, err := activeDeps.lookPath("gcloud"); err != nil {
 		return fmt.Errorf("gcloud CLI not found — install it from https://cloud.google.com/sdk/docs/install")
 	}
 
 	// Resolve project
 	project := gcpProject
 	if project == "" {
-		out, err := exec.Command("gcloud", "config", "get-value", "project", "--quiet").Output()
+		out, err := activeDeps.execCommand("gcloud", "config", "get-value", "project", "--quiet")
 		if err != nil {
 			return fmt.Errorf("could not determine GCP project — use --project flag: %w", err)
 		}
@@ -83,16 +82,12 @@ func runSetupGCP(cmd *cobra.Command, args []string) error {
 
 	// Create Workload Identity Pool
 	fmt.Fprintf(os.Stderr, "Creating Workload Identity Pool '%s'...\n", gcpPoolID)
-	//nolint:gosec // intentional shell-out to gcloud CLI
-	createPool := exec.Command("gcloud", "iam", "workload-identity-pools", "create", gcpPoolID,
+	if err := activeDeps.execCommandRun("gcloud", "iam", "workload-identity-pools", "create", gcpPoolID,
 		"--project", project,
 		"--location", "global",
 		"--display-name", "credctl Device Identity Pool",
 		"--quiet",
-	)
-	createPool.Stdout = os.Stderr
-	createPool.Stderr = os.Stderr
-	if err := createPool.Run(); err != nil {
+	); err != nil {
 		// Pool may already exist, try to continue
 		fmt.Fprintln(os.Stderr, "Pool may already exist, continuing...")
 	}
@@ -102,8 +97,7 @@ func runSetupGCP(cmd *cobra.Command, args []string) error {
 		projectNumber, gcpPoolID, gcpProviderID)
 
 	fmt.Fprintf(os.Stderr, "Creating OIDC Provider '%s'...\n", gcpProviderID)
-	//nolint:gosec // intentional shell-out to gcloud CLI
-	createProvider := exec.Command("gcloud", "iam", "workload-identity-pools", "providers", "create-oidc", gcpProviderID,
+	if err := activeDeps.execCommandRun("gcloud", "iam", "workload-identity-pools", "providers", "create-oidc", gcpProviderID,
 		"--project", project,
 		"--location", "global",
 		"--workload-identity-pool", gcpPoolID,
@@ -111,10 +105,7 @@ func runSetupGCP(cmd *cobra.Command, args []string) error {
 		"--attribute-mapping", "google.subject=assertion.sub",
 		"--allowed-audiences", audience,
 		"--quiet",
-	)
-	createProvider.Stdout = os.Stderr
-	createProvider.Stderr = os.Stderr
-	if err := createProvider.Run(); err != nil {
+	); err != nil {
 		fmt.Fprintln(os.Stderr, "Provider may already exist, continuing...")
 	}
 
@@ -123,16 +114,12 @@ func runSetupGCP(cmd *cobra.Command, args []string) error {
 		projectNumber, gcpPoolID, cfg.DeviceID)
 
 	fmt.Fprintf(os.Stderr, "Binding service account '%s'...\n", gcpServiceAccount)
-	//nolint:gosec // intentional shell-out to gcloud CLI
-	bindSA := exec.Command("gcloud", "iam", "service-accounts", "add-iam-policy-binding", gcpServiceAccount,
+	if err := activeDeps.execCommandRun("gcloud", "iam", "service-accounts", "add-iam-policy-binding", gcpServiceAccount,
 		"--project", project,
 		"--role", "roles/iam.workloadIdentityUser",
 		"--member", member,
 		"--quiet",
-	)
-	bindSA.Stdout = os.Stderr
-	bindSA.Stderr = os.Stderr
-	if err := bindSA.Run(); err != nil {
+	); err != nil {
 		return fmt.Errorf("bind service account: %w", err)
 	}
 
@@ -160,11 +147,10 @@ func getProjectNumber(project string) (string, error) {
 		ProjectNumber string `json:"projectNumber"`
 	}
 
-	//nolint:gosec // intentional shell-out to gcloud CLI
-	out, err := exec.Command("gcloud", "projects", "describe", project,
+	out, err := activeDeps.execCommand("gcloud", "projects", "describe", project,
 		"--format", "json(projectNumber)",
 		"--quiet",
-	).Output()
+	)
 	if err != nil {
 		return "", fmt.Errorf("describe project: %w", err)
 	}

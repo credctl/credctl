@@ -120,6 +120,55 @@ func TestRunInit_KeyGenerationFails(t *testing.T) {
 	}
 }
 
+func TestRunInit_InvalidBiometric(t *testing.T) {
+	mock := &mockEnclave{available: true}
+	d := testDeps(mock)
+	d.loadConfig = func() (*config.Config, error) { return nil, nil }
+	withDeps(t, d)
+
+	initForce = false
+	initKeyTag = config.DefaultKeyTag
+	initBiometric = "invalid-policy"
+
+	err := runInit(nil, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid biometric")
+	}
+	if !strings.Contains(err.Error(), "invalid --biometric") {
+		t.Errorf("error should mention biometric: %v", err)
+	}
+}
+
+func TestRunInit_BiometricFingerprint(t *testing.T) {
+	tmpDir := t.TempDir()
+	var savedCfg *config.Config
+	mock := &mockEnclave{available: true}
+	d := testDeps(mock)
+	d.loadConfig = func() (*config.Config, error) { return nil, nil }
+	d.configDir = func() (string, error) { return tmpDir, nil }
+	d.publicKeyPath = func() (string, error) { return filepath.Join(tmpDir, "device.pub"), nil }
+	d.saveConfig = func(cfg *config.Config) error {
+		savedCfg = cfg
+		return nil
+	}
+	withDeps(t, d)
+
+	initForce = false
+	initKeyTag = config.DefaultKeyTag
+	initBiometric = "fingerprint"
+
+	err := runInit(nil, nil)
+	if err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	if savedCfg == nil {
+		t.Fatal("config was not saved")
+	}
+	if savedCfg.Biometric != "fingerprint" {
+		t.Errorf("biometric = %q, want fingerprint", savedCfg.Biometric)
+	}
+}
+
 func TestRunInit_ConfigSaveError(t *testing.T) {
 	tmpDir := t.TempDir()
 	mock := &mockEnclave{available: true}

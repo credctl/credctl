@@ -104,6 +104,12 @@ func testDeps(enc enclave.Enclave) deps {
 				ExpireTime: time.Now().Add(1 * time.Hour),
 			}, nil
 		},
+		execCommand: func(name string, args ...string) ([]byte, error) {
+			return nil, fmt.Errorf("mock: command %s not available in tests", name)
+		},
+		execCommandRun: func(name string, args ...string) error {
+			return fmt.Errorf("mock: command %s not available in tests", name)
+		},
 	}
 }
 

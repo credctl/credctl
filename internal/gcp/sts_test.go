@@ -153,3 +153,82 @@ func TestGenerateAccessToken_InvalidJSON(t *testing.T) {
 		t.Fatal("expected error for invalid JSON")
 	}
 }
+
+func TestGenerateAccessToken_InvalidExpiration(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"accessToken":"ya29.test","expireTime":"not-a-date"}`))
+	}))
+	defer srv.Close()
+
+	_, err := generateAccessToken(srv.URL, "fed-token", []string{"https://www.googleapis.com/auth/cloud-platform"})
+	if err == nil {
+		t.Fatal("expected error for invalid expiration")
+	}
+	if !strings.Contains(err.Error(), "parse expiration") {
+		t.Errorf("error should mention expiration: %v", err)
+	}
+}
+
+func TestGenerateAccessToken_NetworkError(t *testing.T) {
+	_, err := generateAccessToken("http://127.0.0.1:1", "fed-token", []string{"scope"})
+	if err == nil {
+		t.Fatal("expected error for unreachable endpoint")
+	}
+	if !strings.Contains(err.Error(), "IAM request failed") {
+		t.Errorf("error should mention IAM request: %v", err)
+	}
+}
+
+func TestGenerateAccessToken_NonJSONError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal error"))
+	}))
+	defer srv.Close()
+
+	_, err := generateAccessToken(srv.URL, "fed-token", []string{"scope"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error should contain status code: %v", err)
+	}
+}
+
+func TestExchangeToken_NonJSONError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("server error"))
+	}))
+	defer srv.Close()
+
+	_, err := exchangeToken(srv.URL, "aud", "jwt")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error should contain status code: %v", err)
+	}
+}
+
+func TestExchangeToken_InvalidJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json at all"))
+	}))
+	defer srv.Close()
+
+	_, err := exchangeToken(srv.URL, "aud", "jwt")
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+	if !strings.Contains(err.Error(), "parse STS response") {
+		t.Errorf("error should mention parsing: %v", err)
+	}
+}
+
+func TestWriteCredentialConfig_BadPath(t *testing.T) {
+	err := WriteCredentialConfig("/dev/null/impossible/path.json", &ExternalCredentialConfig{})
+	if err == nil {
+		t.Fatal("expected error for invalid path")
+	}
+}

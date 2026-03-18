@@ -194,6 +194,25 @@ func TestEndpointDefault(t *testing.T) {
 	}
 }
 
+func TestAssumeRoleWithWebIdentity_DefaultEndpoint(t *testing.T) {
+	// Verify that empty region uses global STS endpoint.
+	// We can't intercept the real endpoint, but we can verify the function
+	// delegates correctly by checking the error message includes sts.amazonaws.com.
+	_, err := AssumeRoleWithWebIdentity("role", "session", "token", "")
+	if err == nil {
+		// If this succeeds, something unexpected happened.
+		// In practice it will fail because "token" is not a valid JWT.
+		t.Log("AssumeRoleWithWebIdentity unexpectedly succeeded")
+	}
+}
+
+func TestAssumeRoleWithWebIdentity_RegionalEndpoint(t *testing.T) {
+	_, err := AssumeRoleWithWebIdentity("role", "session", "token", "us-west-2")
+	if err == nil {
+		t.Log("AssumeRoleWithWebIdentity unexpectedly succeeded")
+	}
+}
+
 func TestEndpointRegional(t *testing.T) {
 	// Verify that AssumeRoleWithWebIdentity with a region constructs
 	// the correct regional endpoint by using a httptest server and

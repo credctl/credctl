@@ -23,6 +23,24 @@ type deps struct {
 	lookPath               func(string) (string, error)
 	gcpExchangeToken       func(string, string) (*gcp.FederatedToken, error)
 	gcpGenerateAccessToken func(string, string, []string) (*gcp.AccessToken, error)
+	// execCommand runs an external command and returns its combined output.
+	// Used by setup commands that shell out to aws/gcloud CLIs.
+	execCommand func(name string, args ...string) ([]byte, error)
+	// execCommandRun runs an external command with stdout/stderr connected to os.Stderr.
+	execCommandRun func(name string, args ...string) error
+}
+
+// defaultExecCommand runs a command and returns combined output.
+func defaultExecCommand(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).Output() //nolint:gosec // callers validate inputs
+}
+
+// defaultExecCommandRun runs a command with output to stderr.
+func defaultExecCommandRun(name string, args ...string) error {
+	cmd := exec.Command(name, args...) //nolint:gosec // callers validate inputs
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 var activeDeps = deps{
@@ -35,6 +53,8 @@ var activeDeps = deps{
 	lookPath:               exec.LookPath,
 	gcpExchangeToken:       gcp.ExchangeToken,
 	gcpGenerateAccessToken: gcp.GenerateAccessToken,
+	execCommand:            defaultExecCommand,
+	execCommandRun:         defaultExecCommandRun,
 }
 
 var rootCmd = &cobra.Command{
