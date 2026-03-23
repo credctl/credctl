@@ -60,6 +60,7 @@ credctl setup gcp --service-account credctl@my-project.iam.gserviceaccount.com
 credctl setup gcp-cred-file
 
 # Authenticate
+export GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1
 export GOOGLE_APPLICATION_CREDENTIALS=~/.credctl/gcp-credentials.json
 gcloud storage ls
 ```
@@ -99,14 +100,18 @@ credctl setup gcp-cred-file
 Then point GCP tools at it:
 
 ```bash
+export GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1
 export GOOGLE_APPLICATION_CREDENTIALS=~/.credctl/gcp-credentials.json
 ```
 
 Or use with gcloud directly:
 
 ```bash
+export GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1
 gcloud auth login --cred-file=~/.credctl/gcp-credentials.json
 ```
+
+> **Note:** `GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1` is required by gcloud before it will run executable-sourced credentials. Some gcloud versions (560+) have a known issue with executable-sourced credentials — if you see `KeyError: 'id_token'`, use `gcloud auth login --cred-file` as a workaround, or use GCP client libraries directly which are unaffected.
 
 ## CLI reference
 
