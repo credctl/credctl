@@ -55,7 +55,8 @@ func runSetupGCPCredFile(cmd *cobra.Command, args []string) error {
 	}
 
 	audience := cfg.GCP.Audience()
-	credCfg := gcp.GenerateCredentialConfig(credctlPath, audience, cfg.GCP.ServiceAccountEmail)
+	tokenCachePath := filepath.Join(filepath.Dir(outputPath), "gcp-token-cache.json")
+	credCfg := gcp.GenerateCredentialConfigWithOutput(credctlPath, audience, cfg.GCP.ServiceAccountEmail, tokenCachePath)
 
 	if err := gcp.WriteCredentialConfig(outputPath, credCfg); err != nil {
 		return fmt.Errorf("write credential config: %w", err)
@@ -63,8 +64,10 @@ func runSetupGCPCredFile(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Credential configuration written to %s\n", outputPath)
 	fmt.Printf("\nTo use with GCP client libraries:\n")
+	fmt.Printf("  export GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1\n")
 	fmt.Printf("  export GOOGLE_APPLICATION_CREDENTIALS=%s\n", outputPath)
 	fmt.Printf("\nTo use with gcloud:\n")
+	fmt.Printf("  export GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1\n")
 	fmt.Printf("  gcloud auth login --cred-file=%s\n", outputPath)
 
 	return nil
