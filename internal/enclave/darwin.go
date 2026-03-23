@@ -11,9 +11,10 @@ package enclave
 #include <string.h>
 
 // generateSecureEnclaveKey creates an ECDSA P-256 key pair in the Secure Enclave.
+// biometricPolicy: 0 = none, 1 = any (UserPresence), 2 = fingerprint (BiometryCurrentSet)
 // On success, returns the SecKeyRef for the private key via *outKey and 0.
 // On failure, returns non-zero and writes an error description to errBuf.
-static int generateSecureEnclaveKey(const char *tag, int tagLen, SecKeyRef *outKey, char *errBuf, int errBufLen) {
+static int generateSecureEnclaveKey(const char *tag, int tagLen, int biometricPolicy, SecKeyRef *outKey, char *errBuf, int errBufLen) {
     CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 
@@ -27,11 +28,22 @@ static int generateSecureEnclaveKey(const char *tag, int tagLen, SecKeyRef *outK
     CFDictionarySetValue(attrs, kSecAttrTokenID, kSecAttrTokenIDSecureEnclave);
 
     // Access control — required for Secure Enclave keys
+    // Determine flags based on biometric policy
+    SecAccessControlCreateFlags acFlags;
+    if (biometricPolicy == 0) {
+        acFlags = kSecAccessControlPrivateKeyUsage;
+    } else if (biometricPolicy == 2) {
+        acFlags = kSecAccessControlPrivateKeyUsage | kSecAccessControlBiometryCurrentSet;
+    } else {
+        // Default: require user presence (fail-closed)
+        acFlags = kSecAccessControlPrivateKeyUsage | kSecAccessControlUserPresence;
+    }
+
     CFErrorRef acError = NULL;
     SecAccessControlRef access = SecAccessControlCreateWithFlags(
         kCFAllocatorDefault,
         kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        kSecAccessControlPrivateKeyUsage,
+        acFlags,
         &acError);
     if (access == NULL) {
         if (acError != NULL) {
@@ -110,6 +122,11 @@ static int extractPublicKeyBytes(SecKeyRef privateKey, void **outBytes, int *out
 
     CFIndex len = CFDataGetLength(pubData);
     void *buf = malloc(len);
+    if (buf == NULL) {
+        CFRelease(pubData);
+        snprintf(errBuf, errBufLen, "malloc failed for public key");
+        return -1;
+    }
     memcpy(buf, CFDataGetBytePtr(pubData), len);
     CFRelease(pubData);
 
@@ -195,6 +212,11 @@ static int signData(SecKeyRef privateKey, const void *data, int dataLen, void **
 
     CFIndex len = CFDataGetLength(signature);
     void *buf = malloc(len);
+    if (buf == NULL) {
+        CFRelease(signature);
+        snprintf(errBuf, errBufLen, "malloc failed for signature");
+        return -1;
+    }
     memcpy(buf, CFDataGetBytePtr(signature), len);
     CFRelease(signature);
 
@@ -231,14 +253,25 @@ func (b *cgoBackend) available() bool {
 	return true
 }
 
-func (b *cgoBackend) generateKey(tag string) ([]byte, error) {
+func (b *cgoBackend) generateKey(tag string, biometric BiometricPolicy) ([]byte, error) {
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
+
+	// Map BiometricPolicy to C int: 0=none, 1=any, 2=fingerprint
+	var bPolicy C.int
+	switch biometric {
+	case BiometricAny:
+		bPolicy = 1
+	case BiometricFingerprint:
+		bPolicy = 2
+	default:
+		bPolicy = 1
+	}
 
 	var privateKey C.SecKeyRef
 	errBuf := make([]byte, 512)
 
-	rc := C.generateSecureEnclaveKey(cTag, C.int(len(tag)), &privateKey, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
+	rc := C.generateSecureEnclaveKey(cTag, C.int(len(tag)), bPolicy, &privateKey, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if rc != 0 {
 		return nil, fmt.Errorf("secure enclave key generation failed: %s", cGoString(errBuf))
 	}
@@ -276,6 +309,10 @@ func (b *cgoBackend) deleteKey(tag string) error {
 }
 
 func (b *cgoBackend) sign(tag string, data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("cannot sign empty data")
+	}
+
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 

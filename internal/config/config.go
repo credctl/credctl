@@ -48,6 +48,7 @@ type Config struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	EnclaveType   string     `json:"enclave_type"`
 	PublicKeyPath string     `json:"public_key_path"`
+	Biometric     string     `json:"biometric,omitempty"`
 	AWS           *AWSConfig `json:"aws,omitempty"`
 	GCP           *GCPConfig `json:"gcp,omitempty"`
 }

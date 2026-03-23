@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/credctl/credctl/internal/config"
+	"github.com/credctl/credctl/internal/daemon"
 	"github.com/credctl/credctl/internal/jwt"
 	"github.com/spf13/cobra"
 )
@@ -76,6 +77,12 @@ func runAuthAWS(cfg *config.Config) error {
 	format := authFormat
 	if format == "" {
 		format = "credential_process"
+	}
+
+	// Try the daemon first — if running, fetch cached credentials.
+	if data, err := tryDaemon("aws", format); err == nil {
+		fmt.Print(string(data))
+		return nil
 	}
 
 	kid, signFn, err := prepareSign(cfg)
@@ -147,6 +154,12 @@ func runAuthGCP(cfg *config.Config) error {
 		format = "executable"
 	}
 
+	// Try the daemon first — if running, fetch cached credentials.
+	if data, err := tryDaemon("gcp", format); err == nil {
+		fmt.Print(string(data))
+		return nil
+	}
+
 	kid, signFn, err := prepareSign(cfg)
 	if err != nil {
 		return err
@@ -203,6 +216,26 @@ func runAuthGCP(cfg *config.Config) error {
 	}
 
 	return nil
+}
+
+// tryDaemon attempts to fetch credentials from the running daemon.
+// Returns the raw JSON data on success, or an error if the daemon is not running
+// or the fetch fails (in which case the caller should fall back to the direct path).
+func tryDaemon(provider, format string) ([]byte, error) {
+	cfgDir, err := activeDeps.configDir()
+	if err != nil {
+		return nil, err
+	}
+	socketPath := daemon.SocketPath(cfgDir)
+	if !daemon.DaemonRunning(socketPath) {
+		return nil, fmt.Errorf("daemon not running")
+	}
+	data, err := daemon.FetchCredentials(socketPath, provider, format)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Daemon fetch failed, falling back to direct auth: %v\n", err)
+		return nil, err
+	}
+	return data, nil
 }
 
 // prepareSign loads the public key and returns the KID and signing function.

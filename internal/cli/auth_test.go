@@ -304,3 +304,92 @@ func TestRunAuth_GCP_DefaultFormat(t *testing.T) {
 		t.Fatalf("runAuth GCP default format: %v", err)
 	}
 }
+
+func TestRunAuth_GCP_UnknownFormat(t *testing.T) {
+	mock, pubKeyPath := setupSigningTest(t)
+
+	d := testDeps(mock)
+	cfg := testConfigWithGCP()
+	d.loadConfig = func() (*config.Config, error) { return cfg, nil }
+	d.publicKeyPath = func() (string, error) { return pubKeyPath, nil }
+	withDeps(t, d)
+
+	authProvider = "gcp"
+	authFormat = "xml"
+	err := runAuth(nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "unknown format") {
+		t.Errorf("error should mention unknown format: %v", err)
+	}
+}
+
+func TestRunAuth_AWS_DefaultFormat(t *testing.T) {
+	mock, pubKeyPath := setupSigningTest(t)
+
+	d := testDeps(mock)
+	cfg := testConfigWithAWS()
+	d.loadConfig = func() (*config.Config, error) { return cfg, nil }
+	d.publicKeyPath = func() (string, error) { return pubKeyPath, nil }
+	withDeps(t, d)
+
+	authProvider = "aws"
+	authFormat = "" // should default to credential_process
+	err := runAuth(nil, nil)
+	if err != nil {
+		t.Fatalf("runAuth AWS default format: %v", err)
+	}
+}
+
+func TestRunAuth_SignError(t *testing.T) {
+	mock := &mockEnclave{
+		available: true,
+		sign: func(tag string, data []byte) ([]byte, error) {
+			return nil, errMock("Touch ID cancelled")
+		},
+	}
+
+	tmpDir := t.TempDir()
+	// Need a real public key on disk for prepareSign to work.
+	privKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, _ := x509.MarshalPKIXPublicKey(&privKey.PublicKey)
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	pubKeyPath := filepath.Join(tmpDir, "device.pub")
+	os.WriteFile(pubKeyPath, pubPEM, 0600)
+
+	d := testDeps(mock)
+	cfg := testConfigWithAWS()
+	d.loadConfig = func() (*config.Config, error) { return cfg, nil }
+	d.publicKeyPath = func() (string, error) { return pubKeyPath, nil }
+	withDeps(t, d)
+
+	authProvider = "aws"
+	authFormat = "credential_process"
+	err := runAuth(nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "build JWT") {
+		t.Errorf("error should mention JWT build: %v", err)
+	}
+}
+
+func TestRunAuth_PublicKeyNotFound(t *testing.T) {
+	mock := &mockEnclave{available: true}
+	d := testDeps(mock)
+	cfg := testConfigWithAWS()
+	d.loadConfig = func() (*config.Config, error) { return cfg, nil }
+	d.publicKeyPath = func() (string, error) { return "/nonexistent/device.pub", nil }
+	withDeps(t, d)
+
+	authProvider = "aws"
+	authFormat = "credential_process"
+	err := runAuth(nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "read public key") {
+		t.Errorf("error should mention public key: %v", err)
+	}
+}

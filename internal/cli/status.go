@@ -35,6 +35,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Key tag:      %s\n", cfg.KeyTag)
 	fmt.Printf("  Created:      %s\n", cfg.CreatedAt.Format(time.RFC3339))
 	fmt.Printf("  Public key:   %s\n", cfg.PublicKeyPath)
+	fmt.Printf("  Biometric:    %s\n", biometricLabel(cfg.Biometric))
 
 	// Verify key is still accessible
 	enc := activeDeps.newEnclave()

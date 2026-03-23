@@ -15,7 +15,7 @@ func (b *stubBackend) available() bool {
 	return false
 }
 
-func (b *stubBackend) generateKey(tag string) ([]byte, error) {
+func (b *stubBackend) generateKey(tag string, biometric BiometricPolicy) ([]byte, error) {
 	return nil, fmt.Errorf("Secure Enclave is only available on macOS")
 }
 

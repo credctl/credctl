@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -48,7 +47,7 @@ func init() {
 }
 
 func runSetupAWS(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load()
+	cfg, err := activeDeps.loadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
@@ -89,12 +88,7 @@ func runSetupAWS(cmd *cobra.Command, args []string) error {
 		fmt.Sprintf("RolePolicyArn=%s", setupPolicyARN),
 	}
 
-	//nolint:gosec // intentional shell-out to aws CLI
-	deployCmd := exec.Command("aws", deployArgs...)
-	deployCmd.Stdout = os.Stderr
-	deployCmd.Stderr = os.Stderr
-
-	if err := deployCmd.Run(); err != nil {
+	if err := activeDeps.execCommandRun("aws", deployArgs...); err != nil {
 		return fmt.Errorf("CloudFormation deploy failed: %w", err)
 	}
 
@@ -128,7 +122,7 @@ func runSetupAWS(cmd *cobra.Command, args []string) error {
 	cfg.AWS.IssuerURL = issuerURL
 	cfg.AWS.Region = setupRegion
 	cfg.AWS.S3Bucket = bucketName
-	if err := config.Save(cfg); err != nil {
+	if err := activeDeps.saveConfig(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
@@ -164,12 +158,11 @@ type describeStacksOutput struct {
 }
 
 func getStackOutputs(stackName, region string) (map[string]string, error) {
-	//nolint:gosec // intentional shell-out to aws CLI
-	out, err := exec.Command("aws", "cloudformation", "describe-stacks",
+	out, err := activeDeps.execCommand("aws", "cloudformation", "describe-stacks",
 		"--stack-name", stackName,
 		"--region", region,
 		"--output", "json",
-	).Output()
+	)
 	if err != nil {
 		return nil, fmt.Errorf("describe-stacks: %w", err)
 	}
@@ -192,18 +185,17 @@ func getStackOutputs(stackName, region string) (map[string]string, error) {
 
 // awsCLIAvailable checks if the AWS CLI is installed.
 func awsCLIAvailable() bool {
-	_, err := exec.LookPath("aws")
+	_, err := activeDeps.lookPath("aws")
 	return err == nil
 }
 
 // awsAccountID returns the current AWS account ID.
 func awsAccountID(region string) (string, error) {
-	//nolint:gosec // intentional shell-out to aws CLI
-	out, err := exec.Command("aws", "sts", "get-caller-identity",
+	out, err := activeDeps.execCommand("aws", "sts", "get-caller-identity",
 		"--query", "Account",
 		"--output", "text",
 		"--region", region,
-	).Output()
+	)
 	if err != nil {
 		return "", err
 	}

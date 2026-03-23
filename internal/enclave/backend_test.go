@@ -15,7 +15,7 @@ import (
 // mockBackend implements keyBackend for unit testing without hardware.
 type mockBackend struct {
 	availableVal  bool
-	generateKeyFn func(tag string) ([]byte, error)
+	generateKeyFn func(tag string, biometric BiometricPolicy) ([]byte, error)
 	lookupKeyFn   func(tag string) ([]byte, error)
 	deleteKeyFn   func(tag string) error
 	signFn        func(tag string, data []byte) ([]byte, error)
@@ -23,9 +23,9 @@ type mockBackend struct {
 
 func (m *mockBackend) available() bool { return m.availableVal }
 
-func (m *mockBackend) generateKey(tag string) ([]byte, error) {
+func (m *mockBackend) generateKey(tag string, biometric BiometricPolicy) ([]byte, error) {
 	if m.generateKeyFn != nil {
-		return m.generateKeyFn(tag)
+		return m.generateKeyFn(tag, biometric)
 	}
 	return nil, fmt.Errorf("generateKey not configured")
 }
@@ -186,12 +186,12 @@ func TestEnclaveImpl_Available(t *testing.T) {
 func TestEnclaveImpl_GenerateKey(t *testing.T) {
 	raw := testRawP256PubKey(t)
 	enc := &enclaveImpl{backend: &mockBackend{
-		generateKeyFn: func(tag string) ([]byte, error) {
+		generateKeyFn: func(tag string, biometric BiometricPolicy) ([]byte, error) {
 			return raw, nil
 		},
 	}}
 
-	dk, err := enc.GenerateKey("com.test.gen")
+	dk, err := enc.GenerateKey("com.test.gen", BiometricNone)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
 	}
@@ -212,12 +212,12 @@ func TestEnclaveImpl_GenerateKey(t *testing.T) {
 
 func TestEnclaveImpl_GenerateKey_BackendError(t *testing.T) {
 	enc := &enclaveImpl{backend: &mockBackend{
-		generateKeyFn: func(tag string) ([]byte, error) {
+		generateKeyFn: func(tag string, biometric BiometricPolicy) ([]byte, error) {
 			return nil, fmt.Errorf("secure enclave key generation failed: OSStatus -34018")
 		},
 	}}
 
-	_, err := enc.GenerateKey("com.test.gen")
+	_, err := enc.GenerateKey("com.test.gen", BiometricNone)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -335,11 +335,11 @@ func TestEnclaveImpl_Sign_KeyNotFound(t *testing.T) {
 func TestEnclaveImpl_GenerateAndLoad_SameFingerprint(t *testing.T) {
 	raw := testRawP256PubKey(t)
 	enc := &enclaveImpl{backend: &mockBackend{
-		generateKeyFn: func(tag string) ([]byte, error) { return raw, nil },
+		generateKeyFn: func(tag string, biometric BiometricPolicy) ([]byte, error) { return raw, nil },
 		lookupKeyFn:   func(tag string) ([]byte, error) { return raw, nil },
 	}}
 
-	gen, err := enc.GenerateKey("com.test.fp")
+	gen, err := enc.GenerateKey("com.test.fp", BiometricNone)
 	if err != nil {
 		t.Fatal(err)
 	}

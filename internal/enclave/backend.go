@@ -18,7 +18,7 @@ import (
 // fingerprinting).
 type keyBackend interface {
 	available() bool
-	generateKey(tag string) (rawPubKey []byte, err error)
+	generateKey(tag string, biometric BiometricPolicy) (rawPubKey []byte, err error)
 	lookupKey(tag string) (rawPubKey []byte, err error)
 	deleteKey(tag string) error
 	sign(tag string, data []byte) ([]byte, error)
@@ -34,8 +34,8 @@ func (e *enclaveImpl) Available() bool {
 	return e.backend.available()
 }
 
-func (e *enclaveImpl) GenerateKey(tag string) (*DeviceKey, error) {
-	rawPub, err := e.backend.generateKey(tag)
+func (e *enclaveImpl) GenerateKey(tag string, biometric BiometricPolicy) (*DeviceKey, error) {
+	rawPub, err := e.backend.generateKey(tag, biometric)
 	if err != nil {
 		return nil, err
 	}
@@ -44,6 +44,7 @@ func (e *enclaveImpl) GenerateKey(tag string) (*DeviceKey, error) {
 		return nil, err
 	}
 	dk.CreatedAt = time.Now()
+	dk.Biometric = biometric
 	return dk, nil
 }
 

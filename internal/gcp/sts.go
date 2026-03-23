@@ -56,7 +56,7 @@ func ExchangeToken(audience, subjectToken string) (*FederatedToken, error) {
 // exchangeToken performs the actual GCP STS token exchange HTTP call.
 func exchangeToken(endpoint, audience, subjectToken string) (*FederatedToken, error) {
 	body := fmt.Sprintf(
-		`{"grant_type":"urn:ietf:params:oauth:grant-type:token-exchange","audience":"%s","subject_token_type":"urn:ietf:params:oauth:token-type:jwt","subject_token":"%s","requested_token_type":"urn:ietf:params:oauth:token-type:access_token"}`,
+		`{"grant_type":"urn:ietf:params:oauth:grant-type:token-exchange","audience":"%s","subject_token_type":"urn:ietf:params:oauth:token-type:jwt","subject_token":"%s","requested_token_type":"urn:ietf:params:oauth:token-type:access_token","scope":"https://www.googleapis.com/auth/cloud-platform"}`,
 		audience, subjectToken,
 	)
 

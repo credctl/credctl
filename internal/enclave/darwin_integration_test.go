@@ -25,7 +25,7 @@ func cleanup(t *testing.T, enc Enclave, tag string) {
 func requireKeychain(t *testing.T, enc Enclave) {
 	t.Helper()
 	tag := testKeyTag + ".probe"
-	_, err := enc.GenerateKey(tag)
+	_, err := enc.GenerateKey(tag, BiometricNone)
 	if err != nil {
 		_ = enc.DeleteKey(tag)
 		if strings.Contains(err.Error(), "-34018") || strings.Contains(err.Error(), "OSStatus") {
@@ -47,7 +47,7 @@ func TestSecureEnclave_GenerateLoadDelete(t *testing.T) {
 	t.Cleanup(func() { cleanup(t, enc, tag) })
 
 	// Generate
-	key, err := enc.GenerateKey(tag)
+	key, err := enc.GenerateKey(tag, BiometricNone)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestSecureEnclave_Sign(t *testing.T) {
 	tag := testKeyTag + ".sign"
 	t.Cleanup(func() { cleanup(t, enc, tag) })
 
-	key, err := enc.GenerateKey(tag)
+	key, err := enc.GenerateKey(tag, BiometricNone)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestSecureEnclave_DuplicateTag(t *testing.T) {
 	tag := testKeyTag + ".duplicate"
 	t.Cleanup(func() { cleanup(t, enc, tag) })
 
-	_, err := enc.GenerateKey(tag)
+	_, err := enc.GenerateKey(tag, BiometricNone)
 	if err != nil {
 		t.Fatalf("first GenerateKey: %v", err)
 	}
