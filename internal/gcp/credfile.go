@@ -25,10 +25,17 @@ type credentialSource struct {
 type executableConfig struct {
 	Command       string `json:"command"`
 	TimeoutMillis int    `json:"timeout_millis"`
+	OutputFile    string `json:"output_file,omitempty"`
 }
 
 // GenerateCredentialConfig builds the external credential config JSON structure.
 func GenerateCredentialConfig(credctlPath, audience, serviceAccountEmail string) *ExternalCredentialConfig {
+	return GenerateCredentialConfigWithOutput(credctlPath, audience, serviceAccountEmail, "")
+}
+
+// GenerateCredentialConfigWithOutput builds the external credential config with an optional output file path.
+// GCP client libraries use the output file to cache the executable response, avoiding repeated invocations.
+func GenerateCredentialConfigWithOutput(credctlPath, audience, serviceAccountEmail, outputFile string) *ExternalCredentialConfig {
 	return &ExternalCredentialConfig{ // #nosec G101 -- not hardcoded credentials, this is a config template
 		Type:             "external_account",
 		Audience:         audience,
@@ -42,6 +49,7 @@ func GenerateCredentialConfig(credctlPath, audience, serviceAccountEmail string)
 			Executable: executableConfig{
 				Command:       credctlPath + " auth --provider gcp --format executable",
 				TimeoutMillis: 30000,
+				OutputFile:    outputFile,
 			},
 		},
 	}
