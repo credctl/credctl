@@ -12,14 +12,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+
 //go:embed templates/credctl-infra.yaml
 var cfnTemplate embed.FS
 
 var (
-	setupStackName string
-	setupRoleName  string
-	setupRegion    string
-	setupPolicyARN string
+	setupStackName  string
+	setupRoleName   string
+	setupRegion     string
+	setupPolicyARN  string
+	setupIssuerURL  string
 )
 
 var setupCmd = &cobra.Command{
@@ -40,6 +42,7 @@ func init() {
 	setupAWSCmd.Flags().StringVar(&setupRoleName, "role-name", "credctl-device-role", "IAM role name")
 	setupAWSCmd.Flags().StringVar(&setupRegion, "region", "us-east-1", "AWS region")
 	setupAWSCmd.Flags().StringVar(&setupPolicyARN, "policy-arn", "", "Managed policy ARN to attach to the role")
+	setupAWSCmd.Flags().StringVar(&setupIssuerURL, "issuer-url", "", "Use an existing OIDC issuer URL (skips S3/CloudFront creation)")
 	_ = setupAWSCmd.MarkFlagRequired("policy-arn")
 
 	setupCmd.AddCommand(setupAWSCmd)
@@ -53,6 +56,11 @@ func runSetupAWS(cmd *cobra.Command, args []string) error {
 	}
 	if cfg == nil {
 		return fmt.Errorf("device not initialised — run 'credctl init' first")
+	}
+
+	// If --issuer-url is provided, skip CloudFormation and create only IAM resources
+	if setupIssuerURL != "" {
+		return runSetupAWSWithIssuer(cmd, cfg)
 	}
 
 	// Write CloudFormation template to a temp file
@@ -142,6 +150,98 @@ func runSetupAWS(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("\nAWS setup complete. Configure your AWS CLI profile:")
 	fmt.Println("  credctl setup aws-profile")
+
+	return nil
+}
+
+// runSetupAWSWithIssuer creates only the IAM OIDC provider and role,
+// using an externally-hosted OIDC issuer (e.g. from setup gcp-oidc or setup aws-oidc).
+func runSetupAWSWithIssuer(cmd *cobra.Command, cfg *config.Config) error {
+	issuerURL := setupIssuerURL
+
+	// Strip https:// for the OIDC provider URL (AWS wants it without scheme for some commands)
+	issuerHost := strings.TrimPrefix(issuerURL, "https://")
+
+	// Get thumbprint (use a dummy for S3/GCS — AWS no longer validates thumbprints for public providers)
+	thumbprint := "0000000000000000000000000000000000000000"
+
+	// Create IAM OIDC provider
+	fmt.Fprintf(os.Stderr, "Creating IAM OIDC provider for %s...\n", issuerURL)
+	if err := activeDeps.execCommandRun("aws", "iam", "create-open-id-connect-provider",
+		"--url", issuerURL,
+		"--client-id-list", "sts.amazonaws.com",
+		"--thumbprint-list", thumbprint,
+		"--region", setupRegion,
+	); err != nil {
+		fmt.Fprintln(os.Stderr, "OIDC provider may already exist, continuing...")
+	}
+
+	// Get AWS account ID for the OIDC provider ARN
+	accountID, err := awsAccountID(setupRegion)
+	if err != nil {
+		return fmt.Errorf("get AWS account ID: %w", err)
+	}
+	oidcProviderARN := fmt.Sprintf("arn:aws:iam::%s:oidc-provider/%s", accountID, issuerHost)
+
+	// Create trust policy
+	trustPolicy := map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{
+			{
+				"Effect": "Allow",
+				"Principal": map[string]string{
+					"Federated": oidcProviderARN,
+				},
+				"Action": "sts:AssumeRoleWithWebIdentity",
+				"Condition": map[string]interface{}{
+					"StringEquals": map[string]string{
+						issuerHost + ":sub": cfg.DeviceID,
+						issuerHost + ":aud": "sts.amazonaws.com",
+					},
+				},
+			},
+		},
+	}
+	trustPolicyJSON, _ := json.Marshal(trustPolicy)
+
+	// Create IAM role
+	fmt.Fprintf(os.Stderr, "Creating IAM role '%s'...\n", setupRoleName)
+	if err := activeDeps.execCommandRun("aws", "iam", "create-role",
+		"--role-name", setupRoleName,
+		"--assume-role-policy-document", string(trustPolicyJSON),
+		"--region", setupRegion,
+	); err != nil {
+		fmt.Fprintln(os.Stderr, "Role may already exist, continuing...")
+	}
+
+	// Attach policy
+	fmt.Fprintf(os.Stderr, "Attaching policy %s...\n", setupPolicyARN)
+	if err := activeDeps.execCommandRun("aws", "iam", "attach-role-policy",
+		"--role-name", setupRoleName,
+		"--policy-arn", setupPolicyARN,
+		"--region", setupRegion,
+	); err != nil {
+		return fmt.Errorf("attach policy: %w", err)
+	}
+
+	roleARN := fmt.Sprintf("arn:aws:iam::%s:role/%s", accountID, setupRoleName)
+
+	// Update config
+	if cfg.AWS == nil {
+		cfg.AWS = &config.AWSConfig{}
+	}
+	cfg.AWS.RoleARN = roleARN
+	cfg.AWS.IssuerURL = issuerURL
+	cfg.AWS.Region = setupRegion
+	if err := activeDeps.saveConfig(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "\nAWS setup complete (using external OIDC issuer).\n")
+	fmt.Fprintf(os.Stderr, "  Issuer URL: %s\n", issuerURL)
+	fmt.Fprintf(os.Stderr, "  Role ARN:   %s\n", roleARN)
+	fmt.Fprintln(os.Stderr, "\nConfigure your AWS CLI profile:")
+	fmt.Fprintln(os.Stderr, "  credctl setup aws-profile")
 
 	return nil
 }
