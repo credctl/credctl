@@ -138,11 +138,17 @@ func runOIDCGenerate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("write JWKS: %w", err)
 	}
 
-	// Update config with issuer URL
+	// Update config with issuer URL for both providers
 	if cfg.AWS == nil {
 		cfg.AWS = &config.AWSConfig{}
 	}
 	cfg.AWS.IssuerURL = oidcIssuerURL
+
+	if cfg.GCP == nil {
+		cfg.GCP = &config.GCPConfig{}
+	}
+	cfg.GCP.IssuerURL = oidcIssuerURL
+
 	if err := activeDeps.saveConfig(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
