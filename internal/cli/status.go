@@ -59,5 +59,18 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Show GCP config if present
+	if cfg.GCP != nil {
+		fmt.Println("\nGCP Configuration:")
+		fmt.Printf("  Project number:    %s\n", cfg.GCP.ProjectNumber)
+		fmt.Printf("  Workload pool:     %s\n", cfg.GCP.WorkloadPoolID)
+		fmt.Printf("  Provider:          %s\n", cfg.GCP.ProviderID)
+		fmt.Printf("  Service account:   %s\n", cfg.GCP.ServiceAccountEmail)
+		fmt.Printf("  Issuer URL:        %s\n", cfg.GCP.IssuerURL)
+		if cfg.GCP.CredentialFilePath != "" {
+			fmt.Printf("  Credential file:   %s\n", cfg.GCP.CredentialFilePath)
+		}
+	}
+
 	return nil
 }
