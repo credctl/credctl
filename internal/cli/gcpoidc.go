@@ -17,8 +17,9 @@ var (
 )
 
 var setupGCPOIDCCmd = &cobra.Command{
-	Use:   "gcp-oidc",
-	Short: "Host OIDC discovery documents on Google Cloud Storage",
+	Use:        "gcp-oidc",
+	Short:      "Host OIDC discovery documents on Google Cloud Storage",
+	Deprecated: "use 'credctl setup gcp' instead (it handles OIDC hosting automatically)",
 	Long: `Creates a GCS bucket and uploads OIDC discovery documents so you can use
 credctl with GCP (or AWS) without needing an AWS CloudFront distribution.
 

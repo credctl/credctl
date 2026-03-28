@@ -16,8 +16,9 @@ var (
 )
 
 var setupAWSProfileCmd = &cobra.Command{
-	Use:   "aws-profile",
-	Short: "Configure an AWS CLI profile to use credctl for credentials",
+	Use:        "aws-profile",
+	Short:      "Configure an AWS CLI profile to use credctl for credentials",
+	Deprecated: "use 'credctl setup aws' instead (it configures the profile automatically)",
 	Long: `Adds a credential_process entry to ~/.aws/config so the AWS CLI
 uses credctl to obtain temporary credentials automatically.
 
