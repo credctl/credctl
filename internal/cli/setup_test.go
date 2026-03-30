@@ -1,13 +1,42 @@
 package cli
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/credctl/credctl/internal/config"
 )
+
+// setupOIDCTestDeps generates a real EC key and sets configDir/publicKeyPath on deps.
+// Must be called BEFORE withDeps.
+func setupOIDCTestDeps(t *testing.T, d *deps) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	tmpDir := t.TempDir()
+	pubKeyPath := filepath.Join(tmpDir, "device.pub")
+	if err := os.WriteFile(pubKeyPath, pubPEM, 0600); err != nil {
+		t.Fatalf("write pub key: %v", err)
+	}
+	d.configDir = func() (string, error) { return tmpDir, nil }
+	d.publicKeyPath = func() (string, error) { return pubKeyPath, nil }
+}
 
 func TestRunSetupAWS_NotInitialised(t *testing.T) {
 	mock := &mockEnclave{available: true}
@@ -39,7 +68,66 @@ func TestRunSetupAWS_ConfigLoadError(t *testing.T) {
 	}
 }
 
-func TestRunSetupAWS_DeployFails(t *testing.T) {
+func TestRunSetupAWS_S3PathAccountIDFails(t *testing.T) {
+	mock := &mockEnclave{available: true}
+	d := testDeps(mock)
+	cfg := testConfig()
+	d.loadConfig = func() (*config.Config, error) { return cfg, nil }
+	d.execCommand = func(name string, args ...string) ([]byte, error) {
+		return nil, errMock("sts error")
+	}
+	d.execCommandRun = func(name string, args ...string) error { return nil }
+	withDeps(t, d)
+
+	setupCloudFront = false
+	setupIssuerURL = ""
+	setupAWSBucket = ""
+	err := runSetupAWS(nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "could not determine AWS account ID") {
+		t.Errorf("error should mention account ID: %v", err)
+	}
+}
+
+func TestRunSetupAWS_ReusesExistingIssuer(t *testing.T) {
+	mock := &mockEnclave{available: true}
+	d := testDeps(mock)
+	cfg := testConfigWithAWS()
+	var savedCfg *config.Config
+	d.loadConfig = func() (*config.Config, error) { return cfg, nil }
+	d.saveConfig = func(c *config.Config) error {
+		savedCfg = c
+		return nil
+	}
+	d.execCommand = func(name string, args ...string) ([]byte, error) {
+		return []byte("123456789012\n"), nil
+	}
+	d.execCommandRun = func(name string, args ...string) error { return nil }
+	setupOIDCTestDeps(t, &d)
+	withDeps(t, d)
+
+	setupCloudFront = false
+	setupIssuerURL = ""
+	setupAWSBucket = ""
+	setupPolicyARN = "arn:aws:iam::123456789012:policy/Test"
+	setupRoleName = "credctl-device-role"
+	setupRegion = "us-east-1"
+
+	err := runSetupAWS(nil, nil)
+	if err != nil {
+		t.Fatalf("runSetupAWS: %v", err)
+	}
+	if savedCfg == nil {
+		t.Fatal("config was not saved")
+	}
+	if savedCfg.AWS.IssuerURL != "https://d1234.cloudfront.net" {
+		t.Errorf("IssuerURL = %q, want original", savedCfg.AWS.IssuerURL)
+	}
+}
+
+func TestRunSetupAWS_CloudFormationPath(t *testing.T) {
 	mock := &mockEnclave{available: true}
 	d := testDeps(mock)
 	cfg := testConfig()
@@ -49,16 +137,19 @@ func TestRunSetupAWS_DeployFails(t *testing.T) {
 	}
 	withDeps(t, d)
 
+	setupCloudFront = true
+	setupIssuerURL = ""
 	err := runSetupAWS(nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "CloudFormation deploy failed") {
-		t.Errorf("error should mention deploy: %v", err)
+		t.Errorf("error should mention CloudFormation: %v", err)
 	}
+	setupCloudFront = false
 }
 
-func TestRunSetupAWS_StackOutputsFail(t *testing.T) {
+func TestRunSetupAWS_CloudFormationStackOutputsFail(t *testing.T) {
 	mock := &mockEnclave{available: true}
 	d := testDeps(mock)
 	cfg := testConfig()
@@ -69,6 +160,8 @@ func TestRunSetupAWS_StackOutputsFail(t *testing.T) {
 	}
 	withDeps(t, d)
 
+	setupCloudFront = true
+	setupIssuerURL = ""
 	err := runSetupAWS(nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
@@ -76,9 +169,10 @@ func TestRunSetupAWS_StackOutputsFail(t *testing.T) {
 	if !strings.Contains(err.Error(), "get stack outputs") {
 		t.Errorf("error should mention stack outputs: %v", err)
 	}
+	setupCloudFront = false
 }
 
-func TestRunSetupAWS_MissingOutputs(t *testing.T) {
+func TestRunSetupAWS_CloudFormationMissingOutputs(t *testing.T) {
 	mock := &mockEnclave{available: true}
 	d := testDeps(mock)
 	cfg := testConfig()
@@ -95,6 +189,8 @@ func TestRunSetupAWS_MissingOutputs(t *testing.T) {
 	}
 	withDeps(t, d)
 
+	setupCloudFront = true
+	setupIssuerURL = ""
 	err := runSetupAWS(nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
@@ -102,6 +198,7 @@ func TestRunSetupAWS_MissingOutputs(t *testing.T) {
 	if !strings.Contains(err.Error(), "stack outputs missing") {
 		t.Errorf("error should mention missing outputs: %v", err)
 	}
+	setupCloudFront = false
 }
 
 func TestGetStackOutputs_Success(t *testing.T) {
@@ -201,6 +298,45 @@ func TestAwsAccountID_Success(t *testing.T) {
 	}
 }
 
+func TestResolveIssuerURL_Flag(t *testing.T) {
+	setupIssuerURL = "https://custom.example.com"
+	defer func() { setupIssuerURL = "" }()
+
+	cfg := testConfigWithAWS()
+	url := resolveIssuerURL(cfg)
+	if url != "https://custom.example.com" {
+		t.Errorf("should use flag, got %q", url)
+	}
+}
+
+func TestResolveIssuerURL_AWSConfig(t *testing.T) {
+	setupIssuerURL = ""
+	cfg := testConfigWithAWS()
+	url := resolveIssuerURL(cfg)
+	if url != "https://d1234.cloudfront.net" {
+		t.Errorf("should use AWS config, got %q", url)
+	}
+}
+
+func TestResolveIssuerURL_GCPConfig(t *testing.T) {
+	setupIssuerURL = ""
+	cfg := testConfig()
+	cfg.GCP = &config.GCPConfig{IssuerURL: "https://storage.googleapis.com/credctl-oidc-test"}
+	url := resolveIssuerURL(cfg)
+	if url != "https://storage.googleapis.com/credctl-oidc-test" {
+		t.Errorf("should use GCP config, got %q", url)
+	}
+}
+
+func TestResolveIssuerURL_Empty(t *testing.T) {
+	setupIssuerURL = ""
+	cfg := testConfig()
+	url := resolveIssuerURL(cfg)
+	if url != "" {
+		t.Errorf("should be empty, got %q", url)
+	}
+}
+
 func TestRunSetupGCP_NotInitialised(t *testing.T) {
 	mock := &mockEnclave{available: true}
 	d := testDeps(mock)
@@ -253,34 +389,59 @@ func TestRunSetupGCP_GcloudNotFound(t *testing.T) {
 	}
 }
 
-func TestRunSetupGCP_NoIssuerURL(t *testing.T) {
+func TestRunSetupGCP_CreatesGCSOIDCWhenNoIssuer(t *testing.T) {
 	mock := &mockEnclave{available: true}
 	d := testDeps(mock)
-	cfg := testConfig() // no AWS config, so no issuer URL
+	cfg := testConfig() // no AWS or GCP config, so no issuer URL
 	d.loadConfig = func() (*config.Config, error) { return cfg, nil }
+	d.saveConfig = func(c *config.Config) error { return nil }
 	d.lookPath = func(name string) (string, error) { return "/usr/local/bin/" + name, nil }
+
+	var commands []string
 	d.execCommand = func(name string, args ...string) ([]byte, error) {
-		// For gcloud config get-value project
 		if len(args) > 0 && args[0] == "config" {
 			return []byte("my-project\n"), nil
 		}
-		// For gcloud projects describe
-		return []byte(`{"projectNumber":"123456789"}`), nil
+		if len(args) > 0 && args[0] == "projects" {
+			return []byte(`{"projectNumber":"123456789"}`), nil
+		}
+		return []byte(""), nil
 	}
+	d.execCommandRun = func(name string, args ...string) error {
+		if len(args) > 0 {
+			commands = append(commands, name+" "+args[0])
+		}
+		return nil
+	}
+	setupOIDCTestDeps(t, &d)
 	withDeps(t, d)
 
 	gcpProject = ""
+	gcpPoolID = "credctl-pool"
+	gcpProviderID = "credctl-provider"
+	gcpServiceAccount = "sa@project.iam.gserviceaccount.com"
 	gcpIssuerURL = ""
+	gcpBucket = ""
+
 	err := runSetupGCP(nil, nil)
-	if err == nil {
-		t.Fatal("expected error")
+	if err != nil {
+		t.Fatalf("runSetupGCP: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no issuer URL") {
-		t.Errorf("error should mention issuer URL: %v", err)
+
+	// Should have created a GCS bucket
+	foundBucketCreate := false
+	for _, c := range commands {
+		if strings.Contains(c, "storage") {
+			foundBucketCreate = true
+			break
+		}
+	}
+	if !foundBucketCreate {
+		t.Errorf("expected GCS bucket creation command, got: %v", commands)
 	}
 }
 
-func TestRunSetupGCP_Success(t *testing.T) {
+func TestRunSetupGCP_ReusesAWSIssuer(t *testing.T) {
 	mock := &mockEnclave{available: true}
 	d := testDeps(mock)
 	cfg := testConfigWithAWS() // has issuer URL from AWS config
@@ -298,6 +459,7 @@ func TestRunSetupGCP_Success(t *testing.T) {
 		return []byte("my-project\n"), nil
 	}
 	d.execCommandRun = func(name string, args ...string) error { return nil }
+	setupOIDCTestDeps(t, &d)
 	withDeps(t, d)
 
 	gcpProject = ""
@@ -316,8 +478,8 @@ func TestRunSetupGCP_Success(t *testing.T) {
 	if savedCfg.GCP == nil {
 		t.Fatal("GCP config should not be nil")
 	}
-	if savedCfg.GCP.ProjectNumber != "123456789" {
-		t.Errorf("ProjectNumber = %q", savedCfg.GCP.ProjectNumber)
+	if savedCfg.GCP.IssuerURL != "https://d1234.cloudfront.net" {
+		t.Errorf("should reuse AWS issuer, got %q", savedCfg.GCP.IssuerURL)
 	}
 }
 

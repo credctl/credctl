@@ -19,8 +19,9 @@ var (
 )
 
 var oidcCmd = &cobra.Command{
-	Use:   "oidc",
-	Short: "Manage OIDC discovery documents for AWS federation",
+	Use:    "oidc",
+	Short:  "Manage OIDC discovery documents for AWS federation",
+	Hidden: true,
 }
 
 var oidcGenerateCmd = &cobra.Command{

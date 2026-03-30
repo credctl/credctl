@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,16 +13,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-
 //go:embed templates/credctl-infra.yaml
 var cfnTemplate embed.FS
 
 var (
-	setupStackName  string
-	setupRoleName   string
-	setupRegion     string
-	setupPolicyARN  string
-	setupIssuerURL  string
+	setupStackName   string
+	setupRoleName    string
+	setupRegion      string
+	setupPolicyARN   string
+	setupIssuerURL   string
+	setupCloudFront  bool
+	setupAWSBucket   string
 )
 
 var setupCmd = &cobra.Command{
@@ -31,19 +33,35 @@ var setupCmd = &cobra.Command{
 
 var setupAWSCmd = &cobra.Command{
 	Use:   "aws",
-	Short: "Create AWS infrastructure for credctl OIDC federation",
-	Long: `Creates S3 bucket, CloudFront distribution, IAM OIDC provider, and IAM role
-using CloudFormation. Requires the AWS CLI to be installed and configured.`,
+	Short: "Set up AWS infrastructure for credctl",
+	Long: `Creates all AWS infrastructure needed for credctl OIDC federation:
+
+1. OIDC hosting — creates an S3 bucket and uploads discovery documents
+   (or reuses an existing OIDC endpoint if one is already configured)
+2. IAM OIDC provider — tells AWS to trust your OIDC issuer
+3. IAM role — the role credctl assumes, with your policy attached
+4. AWS CLI profile — configures credential_process for transparent use
+
+If you previously set up GCP, the existing OIDC endpoint is reused automatically.
+
+Use --cloudfront to deploy via CloudFormation with a CloudFront CDN instead of
+direct S3 hosting.
+
+Requires the AWS CLI to be installed and configured.`,
 	RunE: runSetupAWS,
 }
 
 func init() {
-	setupAWSCmd.Flags().StringVar(&setupStackName, "stack-name", "credctl-infra", "CloudFormation stack name")
+	setupAWSCmd.Flags().StringVar(&setupPolicyARN, "policy-arn", "", "Managed policy ARN to attach to the role")
 	setupAWSCmd.Flags().StringVar(&setupRoleName, "role-name", "credctl-device-role", "IAM role name")
 	setupAWSCmd.Flags().StringVar(&setupRegion, "region", "us-east-1", "AWS region")
-	setupAWSCmd.Flags().StringVar(&setupPolicyARN, "policy-arn", "", "Managed policy ARN to attach to the role")
-	setupAWSCmd.Flags().StringVar(&setupIssuerURL, "issuer-url", "", "Use an existing OIDC issuer URL (skips S3/CloudFront creation)")
+	setupAWSCmd.Flags().BoolVar(&setupCloudFront, "cloudfront", false, "Deploy via CloudFormation with CloudFront CDN")
+	setupAWSCmd.Flags().StringVar(&setupAWSBucket, "bucket", "", "S3 bucket name for OIDC hosting (default: credctl-oidc-{account-id})")
+	setupAWSCmd.Flags().StringVar(&setupStackName, "stack-name", "credctl-infra", "CloudFormation stack name (only with --cloudfront)")
+	setupAWSCmd.Flags().StringVar(&setupIssuerURL, "issuer-url", "", "Use an existing OIDC issuer URL (advanced)")
 	_ = setupAWSCmd.MarkFlagRequired("policy-arn")
+	_ = setupAWSCmd.Flags().MarkHidden("issuer-url")
+	_ = setupAWSCmd.Flags().MarkHidden("stack-name")
 
 	setupCmd.AddCommand(setupAWSCmd)
 	rootCmd.AddCommand(setupCmd)
@@ -58,117 +76,196 @@ func runSetupAWS(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("device not initialised — run 'credctl init' first")
 	}
 
-	// If --issuer-url is provided, skip CloudFormation and create only IAM resources
-	if setupIssuerURL != "" {
-		return runSetupAWSWithIssuer(cmd, cfg)
+	if !awsCLIAvailable() {
+		return fmt.Errorf("AWS CLI not found — install it from https://aws.amazon.com/cli/")
 	}
 
-	// Write CloudFormation template to a temp file
-	templateData, err := cfnTemplate.ReadFile("templates/credctl-infra.yaml")
+	// --cloudfront: use the original CloudFormation path
+	if setupCloudFront {
+		return runSetupAWSCloudFormation(cmd, cfg)
+	}
+
+	// Step 1: Resolve issuer URL
+	issuerURL := resolveIssuerURL(cfg)
+
+	// Step 2: If no issuer URL exists anywhere, create S3 OIDC hosting
+	if issuerURL == "" {
+		var err error
+		issuerURL, err = createS3OIDCBucket(cfg)
+		if err != nil {
+			return fmt.Errorf("create OIDC hosting: %w", err)
+		}
+	} else {
+		// Re-publish OIDC docs in case key was rotated
+		fmt.Fprintf(os.Stderr, "Using existing OIDC issuer: %s\n", issuerURL)
+		oidcIssuerURL = issuerURL
+		if err := runOIDCGenerate(cmd, nil); err != nil {
+			return fmt.Errorf("oidc generate: %w", err)
+		}
+		// Re-publish if we own an S3 bucket
+		if cfg.AWS != nil && cfg.AWS.S3Bucket != "" {
+			oidcPublishBucket = cfg.AWS.S3Bucket
+			oidcPublishRegion = setupRegion
+			_ = runOIDCPublish(cmd, nil)
+		}
+	}
+
+	// Step 3: Create/update IAM resources
+	roleARN, err := createAWSIAMResources(cfg, issuerURL)
 	if err != nil {
-		return fmt.Errorf("read embedded template: %w", err)
+		return err
 	}
 
-	tmpFile, err := os.CreateTemp("", "credctl-cfn-*.yaml")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	defer os.Remove(tmpFile.Name())
-
-	if _, err := tmpFile.Write(templateData); err != nil {
-		tmpFile.Close()
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	tmpFile.Close()
-
-	// Deploy CloudFormation stack
-	fmt.Printf("Deploying CloudFormation stack '%s' in %s...\n", setupStackName, setupRegion)
-
-	deployArgs := []string{
-		"cloudformation", "deploy",
-		"--template-file", tmpFile.Name(),
-		"--stack-name", setupStackName,
-		"--region", setupRegion,
-		"--capabilities", "CAPABILITY_NAMED_IAM",
-		"--parameter-overrides",
-		fmt.Sprintf("DeviceFingerprint=%s", cfg.DeviceID),
-		fmt.Sprintf("RoleName=%s", setupRoleName),
-		fmt.Sprintf("RolePolicyArn=%s", setupPolicyARN),
-	}
-
-	if err := activeDeps.execCommandRun("aws", deployArgs...); err != nil {
-		return fmt.Errorf("CloudFormation deploy failed: %w", err)
-	}
-
-	// Wait for stack to complete and get outputs
-	fmt.Println("Waiting for stack to complete...")
-	time.Sleep(2 * time.Second)
-
-	outputs, err := getStackOutputs(setupStackName, setupRegion)
-	if err != nil {
-		return fmt.Errorf("get stack outputs: %w", err)
-	}
-
-	issuerURL := outputs["IssuerURL"]
-	roleARN := outputs["RoleARN"]
-	bucketName := outputs["BucketName"]
-
-	if issuerURL == "" || roleARN == "" {
-		return fmt.Errorf("stack outputs missing — check CloudFormation console")
-	}
-
-	fmt.Printf("\nStack outputs:\n")
-	fmt.Printf("  Issuer URL: %s\n", issuerURL)
-	fmt.Printf("  Role ARN:   %s\n", roleARN)
-	fmt.Printf("  S3 Bucket:  %s\n", bucketName)
-
-	// Update config
+	// Step 4: Save config
 	if cfg.AWS == nil {
 		cfg.AWS = &config.AWSConfig{}
 	}
 	cfg.AWS.RoleARN = roleARN
 	cfg.AWS.IssuerURL = issuerURL
 	cfg.AWS.Region = setupRegion
-	cfg.AWS.S3Bucket = bucketName
 	if err := activeDeps.saveConfig(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	// Run oidc generate + publish
-	fmt.Println("\nGenerating OIDC documents...")
-	oidcIssuerURL = issuerURL
-	if err := runOIDCGenerate(cmd, nil); err != nil {
-		return fmt.Errorf("oidc generate: %w", err)
+	// Step 5: Auto-run aws-profile
+	fmt.Fprintln(os.Stderr, "\nConfiguring AWS CLI profile...")
+	awsProfileName = "credctl"
+	awsProfileForce = true
+	if err := runSetupAWSProfile(cmd, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not configure AWS profile: %v\n", err)
 	}
 
-	fmt.Println("\nPublishing OIDC documents...")
-	oidcPublishBucket = bucketName
-	oidcPublishRegion = setupRegion
-	if err := runOIDCPublish(cmd, nil); err != nil {
-		return fmt.Errorf("oidc publish: %w", err)
-	}
-
-	fmt.Println("\nAWS setup complete. Configure your AWS CLI profile:")
-	fmt.Println("  credctl setup aws-profile")
+	fmt.Fprintf(os.Stderr, "\nAWS setup complete.\n")
+	fmt.Fprintf(os.Stderr, "  Issuer URL: %s\n", issuerURL)
+	fmt.Fprintf(os.Stderr, "  Role ARN:   %s\n", roleARN)
+	fmt.Fprintf(os.Stderr, "\nTest it:\n")
+	fmt.Fprintf(os.Stderr, "  credctl auth\n")
 
 	return nil
 }
 
-// runSetupAWSWithIssuer creates or updates the IAM OIDC provider and role,
-// using an externally-hosted OIDC issuer (e.g. from setup gcp-oidc or setup aws-oidc).
-func runSetupAWSWithIssuer(cmd *cobra.Command, cfg *config.Config) error {
-	issuerURL := setupIssuerURL
+// resolveIssuerURL returns an existing issuer URL from config or flags.
+// Returns "" if none exists (caller should create one).
+func resolveIssuerURL(cfg *config.Config) string {
+	// Priority 1: explicit flag
+	if setupIssuerURL != "" {
+		return setupIssuerURL
+	}
+	// Priority 2: existing AWS config
+	if cfg.AWS != nil && cfg.AWS.IssuerURL != "" {
+		return cfg.AWS.IssuerURL
+	}
+	// Priority 3: existing GCP config
+	if cfg.GCP != nil && cfg.GCP.IssuerURL != "" {
+		return cfg.GCP.IssuerURL
+	}
+	return ""
+}
 
-	// Strip https:// for the OIDC provider URL (AWS wants it without scheme for some commands)
+// createS3OIDCBucket creates a public S3 bucket and uploads OIDC documents.
+func createS3OIDCBucket(cfg *config.Config) (string, error) {
+	bucket := setupAWSBucket
+	if bucket == "" {
+		accountID, err := awsAccountID(setupRegion)
+		if err != nil {
+			return "", fmt.Errorf("could not determine AWS account ID: %w", err)
+		}
+		bucket = "credctl-oidc-" + accountID
+	}
+
+	issuerURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com", bucket, setupRegion)
+
+	// Create bucket
+	fmt.Fprintf(os.Stderr, "Creating S3 bucket '%s'...\n", bucket)
+	createArgs := []string{"s3api", "create-bucket",
+		"--bucket", bucket,
+		"--region", setupRegion,
+	}
+	if setupRegion != "us-east-1" {
+		createArgs = append(createArgs,
+			"--create-bucket-configuration",
+			fmt.Sprintf("LocationConstraint=%s", setupRegion),
+		)
+	}
+	if err := activeDeps.execCommandRun("aws", createArgs...); err != nil {
+		fmt.Fprintln(os.Stderr, "Bucket may already exist, continuing...")
+	}
+
+	// Disable Block Public Access
+	fmt.Fprintln(os.Stderr, "Configuring public access...")
+	if err := activeDeps.execCommandRun("aws", "s3api", "put-public-access-block",
+		"--bucket", bucket,
+		"--public-access-block-configuration",
+		"BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false",
+		"--region", setupRegion,
+	); err != nil {
+		return "", fmt.Errorf("failed to disable block public access: %w", err)
+	}
+
+	// Set bucket policy for public read on OIDC paths only
+	policy := map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{
+			{
+				"Sid":       "AllowPublicReadOIDC",
+				"Effect":    "Allow",
+				"Principal": "*",
+				"Action":    "s3:GetObject",
+				"Resource": []string{
+					fmt.Sprintf("arn:aws:s3:::%s/.well-known/*", bucket),
+					fmt.Sprintf("arn:aws:s3:::%s/keys.json", bucket),
+				},
+			},
+		},
+	}
+	policyJSON, _ := json.Marshal(policy)
+
+	if err := activeDeps.execCommandRun("aws", "s3api", "put-bucket-policy",
+		"--bucket", bucket,
+		"--policy", string(policyJSON),
+		"--region", setupRegion,
+	); err != nil {
+		return "", fmt.Errorf("failed to set bucket policy: %w", err)
+	}
+
+	// Generate and upload OIDC documents
+	fmt.Fprintln(os.Stderr, "Generating OIDC documents...")
+	oidcIssuerURL = issuerURL
+	if err := runOIDCGenerate(nil, nil); err != nil {
+		return "", fmt.Errorf("oidc generate: %w", err)
+	}
+
+	fmt.Fprintln(os.Stderr, "Uploading OIDC documents...")
+	cfgDir, err := activeDeps.configDir()
+	if err != nil {
+		return "", fmt.Errorf("config dir: %w", err)
+	}
+	oidcDir := filepath.Join(cfgDir, "oidc")
+	s3Bucket := "s3://" + bucket
+	if err := s3Upload(filepath.Join(oidcDir, ".well-known", "openid-configuration"), s3Bucket+"/.well-known/openid-configuration", "application/json", setupRegion); err != nil {
+		return "", fmt.Errorf("upload discovery: %w", err)
+	}
+	if err := s3Upload(filepath.Join(oidcDir, "keys.json"), s3Bucket+"/keys.json", "application/json", setupRegion); err != nil {
+		return "", fmt.Errorf("upload JWKS: %w", err)
+	}
+
+	// Save bucket to config
+	if cfg.AWS == nil {
+		cfg.AWS = &config.AWSConfig{}
+	}
+	cfg.AWS.S3Bucket = bucket
+
+	return issuerURL, nil
+}
+
+// createAWSIAMResources creates or updates the IAM OIDC provider and role.
+func createAWSIAMResources(cfg *config.Config, issuerURL string) (string, error) {
 	issuerHost := strings.TrimPrefix(issuerURL, "https://")
-
-	// Get thumbprint (use a dummy for S3/GCS — AWS no longer validates thumbprints for public providers)
 	thumbprint := "0000000000000000000000000000000000000000"
 
-	// Get AWS account ID
 	accountID, err := awsAccountID(setupRegion)
 	if err != nil {
-		return fmt.Errorf("get AWS account ID: %w", err)
+		return "", fmt.Errorf("get AWS account ID: %w", err)
 	}
 
 	// Delete old OIDC provider if issuer URL has changed
@@ -216,21 +313,20 @@ func runSetupAWSWithIssuer(cmd *cobra.Command, cfg *config.Config) error {
 	}
 	trustPolicyJSON, _ := json.Marshal(trustPolicy)
 
-	// Try to create the role; if it exists, update its trust policy
+	// Create or update role
 	fmt.Fprintf(os.Stderr, "Creating IAM role '%s'...\n", setupRoleName)
 	if err := activeDeps.execCommandRun("aws", "iam", "create-role",
 		"--role-name", setupRoleName,
 		"--assume-role-policy-document", string(trustPolicyJSON),
 		"--region", setupRegion,
 	); err != nil {
-		// Role exists — update the trust policy to point at the new OIDC provider
 		fmt.Fprintln(os.Stderr, "Role exists, updating trust policy...")
 		if err := activeDeps.execCommandRun("aws", "iam", "update-assume-role-policy",
 			"--role-name", setupRoleName,
 			"--policy-document", string(trustPolicyJSON),
 			"--region", setupRegion,
 		); err != nil {
-			return fmt.Errorf("failed to update role trust policy: %w", err)
+			return "", fmt.Errorf("failed to update role trust policy: %w", err)
 		}
 	}
 
@@ -241,10 +337,64 @@ func runSetupAWSWithIssuer(cmd *cobra.Command, cfg *config.Config) error {
 		"--policy-arn", setupPolicyARN,
 		"--region", setupRegion,
 	); err != nil {
-		return fmt.Errorf("attach policy: %w", err)
+		return "", fmt.Errorf("attach policy: %w", err)
 	}
 
-	roleARN := fmt.Sprintf("arn:aws:iam::%s:role/%s", accountID, setupRoleName)
+	return fmt.Sprintf("arn:aws:iam::%s:role/%s", accountID, setupRoleName), nil
+}
+
+// runSetupAWSCloudFormation runs the original CloudFormation-based setup path.
+func runSetupAWSCloudFormation(cmd *cobra.Command, cfg *config.Config) error {
+	templateData, err := cfnTemplate.ReadFile("templates/credctl-infra.yaml")
+	if err != nil {
+		return fmt.Errorf("read embedded template: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp("", "credctl-cfn-*.yaml")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.Write(templateData); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	fmt.Printf("Deploying CloudFormation stack '%s' in %s...\n", setupStackName, setupRegion)
+
+	deployArgs := []string{
+		"cloudformation", "deploy",
+		"--template-file", tmpFile.Name(),
+		"--stack-name", setupStackName,
+		"--region", setupRegion,
+		"--capabilities", "CAPABILITY_NAMED_IAM",
+		"--parameter-overrides",
+		fmt.Sprintf("DeviceFingerprint=%s", cfg.DeviceID),
+		fmt.Sprintf("RoleName=%s", setupRoleName),
+		fmt.Sprintf("RolePolicyArn=%s", setupPolicyARN),
+	}
+
+	if err := activeDeps.execCommandRun("aws", deployArgs...); err != nil {
+		return fmt.Errorf("CloudFormation deploy failed: %w", err)
+	}
+
+	fmt.Println("Waiting for stack to complete...")
+	time.Sleep(2 * time.Second)
+
+	outputs, err := getStackOutputs(setupStackName, setupRegion)
+	if err != nil {
+		return fmt.Errorf("get stack outputs: %w", err)
+	}
+
+	issuerURL := outputs["IssuerURL"]
+	roleARN := outputs["RoleARN"]
+	bucketName := outputs["BucketName"]
+
+	if issuerURL == "" || roleARN == "" {
+		return fmt.Errorf("stack outputs missing — check CloudFormation console")
+	}
 
 	// Update config
 	if cfg.AWS == nil {
@@ -253,15 +403,39 @@ func runSetupAWSWithIssuer(cmd *cobra.Command, cfg *config.Config) error {
 	cfg.AWS.RoleARN = roleARN
 	cfg.AWS.IssuerURL = issuerURL
 	cfg.AWS.Region = setupRegion
+	cfg.AWS.S3Bucket = bucketName
 	if err := activeDeps.saveConfig(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nAWS setup complete (using external OIDC issuer).\n")
+	// Generate + publish OIDC docs
+	fmt.Println("\nGenerating OIDC documents...")
+	oidcIssuerURL = issuerURL
+	if err := runOIDCGenerate(cmd, nil); err != nil {
+		return fmt.Errorf("oidc generate: %w", err)
+	}
+
+	fmt.Println("\nPublishing OIDC documents...")
+	oidcPublishBucket = bucketName
+	oidcPublishRegion = setupRegion
+	if err := runOIDCPublish(cmd, nil); err != nil {
+		return fmt.Errorf("oidc publish: %w", err)
+	}
+
+	// Auto-run aws-profile
+	fmt.Fprintln(os.Stderr, "\nConfiguring AWS CLI profile...")
+	awsProfileName = "credctl"
+	awsProfileForce = true
+	if err := runSetupAWSProfile(cmd, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not configure AWS profile: %v\n", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "\nAWS setup complete.\n")
 	fmt.Fprintf(os.Stderr, "  Issuer URL: %s\n", issuerURL)
 	fmt.Fprintf(os.Stderr, "  Role ARN:   %s\n", roleARN)
-	fmt.Fprintln(os.Stderr, "\nConfigure your AWS CLI profile:")
-	fmt.Fprintln(os.Stderr, "  credctl setup aws-profile")
+	fmt.Fprintf(os.Stderr, "  S3 Bucket:  %s\n", bucketName)
+	fmt.Fprintf(os.Stderr, "\nTest it:\n")
+	fmt.Fprintf(os.Stderr, "  credctl auth\n")
 
 	return nil
 }

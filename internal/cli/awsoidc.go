@@ -16,8 +16,9 @@ var (
 )
 
 var setupAWSOIDCCmd = &cobra.Command{
-	Use:   "aws-oidc",
-	Short: "Host OIDC discovery documents on S3 (no CloudFront)",
+	Use:        "aws-oidc",
+	Short:      "Host OIDC discovery documents on S3 (no CloudFront)",
+	Deprecated: "use 'credctl setup aws' instead (it handles OIDC hosting automatically)",
 	Long: `Creates a public S3 bucket and uploads OIDC discovery documents so you can use
 credctl without a CloudFront distribution. Simpler and cheaper than 'setup aws',
 but without CDN caching or DDoS protection.

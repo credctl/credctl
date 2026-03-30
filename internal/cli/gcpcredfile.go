@@ -11,8 +11,9 @@ import (
 var gcpCredFileOutput string
 
 var setupGCPCredFileCmd = &cobra.Command{
-	Use:   "gcp-cred-file",
-	Short: "Generate a GCP external credential configuration file",
+	Use:        "gcp-cred-file",
+	Short:      "Generate a GCP external credential configuration file",
+	Deprecated: "use 'credctl setup gcp' instead (it generates the credential file automatically)",
 	Long: `Creates a JSON credential configuration file that GCP client libraries
 and gcloud can use to authenticate via credctl.
 
