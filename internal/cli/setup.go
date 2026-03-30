@@ -154,7 +154,7 @@ func runSetupAWS(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runSetupAWSWithIssuer creates only the IAM OIDC provider and role,
+// runSetupAWSWithIssuer creates or updates the IAM OIDC provider and role,
 // using an externally-hosted OIDC issuer (e.g. from setup gcp-oidc or setup aws-oidc).
 func runSetupAWSWithIssuer(cmd *cobra.Command, cfg *config.Config) error {
 	issuerURL := setupIssuerURL
@@ -164,6 +164,23 @@ func runSetupAWSWithIssuer(cmd *cobra.Command, cfg *config.Config) error {
 
 	// Get thumbprint (use a dummy for S3/GCS — AWS no longer validates thumbprints for public providers)
 	thumbprint := "0000000000000000000000000000000000000000"
+
+	// Get AWS account ID
+	accountID, err := awsAccountID(setupRegion)
+	if err != nil {
+		return fmt.Errorf("get AWS account ID: %w", err)
+	}
+
+	// Delete old OIDC provider if issuer URL has changed
+	if cfg.AWS != nil && cfg.AWS.IssuerURL != "" && cfg.AWS.IssuerURL != issuerURL {
+		oldHost := strings.TrimPrefix(cfg.AWS.IssuerURL, "https://")
+		oldProviderARN := fmt.Sprintf("arn:aws:iam::%s:oidc-provider/%s", accountID, oldHost)
+		fmt.Fprintf(os.Stderr, "Removing old OIDC provider (%s)...\n", cfg.AWS.IssuerURL)
+		_ = activeDeps.execCommandRun("aws", "iam", "delete-open-id-connect-provider",
+			"--open-id-connect-provider-arn", oldProviderARN,
+			"--region", setupRegion,
+		)
+	}
 
 	// Create IAM OIDC provider
 	fmt.Fprintf(os.Stderr, "Creating IAM OIDC provider for %s...\n", issuerURL)
@@ -176,14 +193,9 @@ func runSetupAWSWithIssuer(cmd *cobra.Command, cfg *config.Config) error {
 		fmt.Fprintln(os.Stderr, "OIDC provider may already exist, continuing...")
 	}
 
-	// Get AWS account ID for the OIDC provider ARN
-	accountID, err := awsAccountID(setupRegion)
-	if err != nil {
-		return fmt.Errorf("get AWS account ID: %w", err)
-	}
 	oidcProviderARN := fmt.Sprintf("arn:aws:iam::%s:oidc-provider/%s", accountID, issuerHost)
 
-	// Create trust policy
+	// Build trust policy
 	trustPolicy := map[string]interface{}{
 		"Version": "2012-10-17",
 		"Statement": []map[string]interface{}{
@@ -204,14 +216,22 @@ func runSetupAWSWithIssuer(cmd *cobra.Command, cfg *config.Config) error {
 	}
 	trustPolicyJSON, _ := json.Marshal(trustPolicy)
 
-	// Create IAM role
+	// Try to create the role; if it exists, update its trust policy
 	fmt.Fprintf(os.Stderr, "Creating IAM role '%s'...\n", setupRoleName)
 	if err := activeDeps.execCommandRun("aws", "iam", "create-role",
 		"--role-name", setupRoleName,
 		"--assume-role-policy-document", string(trustPolicyJSON),
 		"--region", setupRegion,
 	); err != nil {
-		fmt.Fprintln(os.Stderr, "Role may already exist, continuing...")
+		// Role exists — update the trust policy to point at the new OIDC provider
+		fmt.Fprintln(os.Stderr, "Role exists, updating trust policy...")
+		if err := activeDeps.execCommandRun("aws", "iam", "update-assume-role-policy",
+			"--role-name", setupRoleName,
+			"--policy-document", string(trustPolicyJSON),
+			"--region", setupRegion,
+		); err != nil {
+			return fmt.Errorf("failed to update role trust policy: %w", err)
+		}
 	}
 
 	// Attach policy
