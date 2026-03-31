@@ -60,12 +60,18 @@ var activeDeps = deps{
 	execCommandRun:         defaultExecCommandRun,
 }
 
+var verbose bool
+
 var rootCmd = &cobra.Command{
 	Use:           "credctl",
 	Short:         "Manage credentials with machine identity",
 	Long:          "credctl uses the macOS Secure Enclave to create hardware-bound device identities for credential management.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
+}
+
+func init() {
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Print debug output")
 }
 
 func Execute() {
