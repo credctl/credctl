@@ -506,7 +506,7 @@ func tlsThumbprint(host string) (string, error) {
 	// Use the last cert in the chain (root or intermediate closest to root)
 	// AWS docs say to use the top intermediate CA certificate
 	cert := certs[len(certs)-1]
-	fingerprint := sha1.Sum(cert.Raw)
+	fingerprint := sha1.Sum(cert.Raw) //nolint:gosec // AWS IAM requires SHA-1 thumbprints for OIDC providers
 	return hex.EncodeToString(fingerprint[:]), nil
 }
 
