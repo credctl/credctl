@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"crypto/sha1"
+	"crypto" //nolint:gosec // AWS IAM requires SHA-1 thumbprints for OIDC providers
 	"crypto/tls"
 	"embed"
 	"encoding/hex"
@@ -506,7 +506,9 @@ func tlsThumbprint(host string) (string, error) {
 	// Use the last cert in the chain (root or intermediate closest to root)
 	// AWS docs say to use the top intermediate CA certificate
 	cert := certs[len(certs)-1]
-	fingerprint := sha1.Sum(cert.Raw) //nolint:gosec // AWS IAM requires SHA-1 thumbprints for OIDC providers
+	h := crypto.SHA1.New() //nolint:gosec // AWS IAM requires SHA-1 thumbprints for OIDC providers
+	h.Write(cert.Raw)
+	fingerprint := h.Sum(nil)
 	return hex.EncodeToString(fingerprint[:]), nil
 }
 
