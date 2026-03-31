@@ -164,28 +164,37 @@ static int lookupKey(const char *tag, int tagLen, SecKeyRef *outKey, char *errBu
     return 0;
 }
 
-// deleteKey deletes a key by application tag.
+// deleteKey deletes ALL keys matching the application tag.
+// Loops until no more keys are found, to handle duplicate keys
+// from repeated init runs.
 // Returns 0 on success, -1 on failure.
 static int deleteKey(const char *tag, int tagLen, char *errBuf, int errBufLen) {
-    CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-
-    CFDictionarySetValue(query, kSecClass, kSecClassKey);
-    CFDictionarySetValue(query, kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom);
-
     CFDataRef tagData = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)tag, tagLen);
-    CFDictionarySetValue(query, kSecAttrApplicationTag, tagData);
+    int deleted = 0;
 
-    OSStatus status = SecItemDelete(query);
+    while (1) {
+        CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+            &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 
-    CFRelease(tagData);
-    CFRelease(query);
+        CFDictionarySetValue(query, kSecClass, kSecClassKey);
+        CFDictionarySetValue(query, kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom);
+        CFDictionarySetValue(query, kSecAttrApplicationTag, tagData);
 
-    if (status != errSecSuccess && status != errSecItemNotFound) {
-        snprintf(errBuf, errBufLen, "failed to delete key (OSStatus %d)", (int)status);
-        return -1;
+        OSStatus status = SecItemDelete(query);
+        CFRelease(query);
+
+        if (status == errSecItemNotFound) {
+            break;  // no more keys with this tag
+        }
+        if (status != errSecSuccess) {
+            CFRelease(tagData);
+            snprintf(errBuf, errBufLen, "failed to delete key (OSStatus %d)", (int)status);
+            return -1;
+        }
+        deleted++;
     }
 
+    CFRelease(tagData);
     return 0;
 }
 
