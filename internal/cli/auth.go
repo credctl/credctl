@@ -96,6 +96,14 @@ func runAuthAWS(cfg *config.Config) error {
 		return fmt.Errorf("build JWT: %w", err)
 	}
 
+	if verbose {
+		fmt.Fprintf(os.Stderr, "JWT KID:    %s\n", kid)
+		fmt.Fprintf(os.Stderr, "JWT issuer: %s\n", cfg.AWS.IssuerURL)
+		fmt.Fprintf(os.Stderr, "JWT sub:    %s\n", cfg.DeviceID)
+		fmt.Fprintf(os.Stderr, "JWT aud:    sts.amazonaws.com\n")
+		fmt.Fprintf(os.Stderr, "JWT token:  %s\n", token)
+	}
+
 	// Call STS — session name must match [\w+=,.@-]*
 	fingerprint := strings.TrimPrefix(cfg.DeviceID, "SHA256:")
 	randBytes := make([]byte, 4)
