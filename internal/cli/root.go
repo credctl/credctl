@@ -23,6 +23,8 @@ type deps struct {
 	lookPath               func(string) (string, error)
 	gcpExchangeToken       func(string, string) (*gcp.FederatedToken, error)
 	gcpGenerateAccessToken func(string, string, []string) (*gcp.AccessToken, error)
+	// tlsThumbprint returns the SHA-1 thumbprint of a host's TLS certificate.
+	tlsThumbprint func(host string) (string, error)
 	// execCommand runs an external command and returns its combined output.
 	// Used by setup commands that shell out to aws/gcloud CLIs.
 	execCommand func(name string, args ...string) ([]byte, error)
@@ -53,6 +55,7 @@ var activeDeps = deps{
 	lookPath:               exec.LookPath,
 	gcpExchangeToken:       gcp.ExchangeToken,
 	gcpGenerateAccessToken: gcp.GenerateAccessToken,
+	tlsThumbprint:          tlsThumbprint,
 	execCommand:            defaultExecCommand,
 	execCommandRun:         defaultExecCommandRun,
 }
