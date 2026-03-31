@@ -104,6 +104,9 @@ func testDeps(enc enclave.Enclave) deps {
 				ExpireTime: time.Now().Add(1 * time.Hour),
 			}, nil
 		},
+		tlsThumbprint: func(host string) (string, error) {
+			return "aabbccddee00112233445566778899aabbccddee", nil
+		},
 		execCommand: func(name string, args ...string) ([]byte, error) {
 			return nil, fmt.Errorf("mock: command %s not available in tests", name)
 		},

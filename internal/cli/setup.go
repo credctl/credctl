@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"crypto/sha1"
+	"crypto/tls"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -261,7 +264,13 @@ func createS3OIDCBucket(cfg *config.Config) (string, error) {
 // createAWSIAMResources creates or updates the IAM OIDC provider and role.
 func createAWSIAMResources(cfg *config.Config, issuerURL string) (string, error) {
 	issuerHost := strings.TrimPrefix(issuerURL, "https://")
-	thumbprint := "0000000000000000000000000000000000000000"
+
+	// Compute the TLS certificate thumbprint for the OIDC endpoint
+	fmt.Fprintf(os.Stderr, "Fetching TLS thumbprint for %s...\n", issuerHost)
+	thumbprint, err := activeDeps.tlsThumbprint(issuerHost)
+	if err != nil {
+		return "", fmt.Errorf("get TLS thumbprint: %w", err)
+	}
 
 	accountID, err := awsAccountID(setupRegion)
 	if err != nil {
@@ -475,6 +484,30 @@ func getStackOutputs(stackName, region string) (map[string]string, error) {
 		outputs[o.OutputKey] = o.OutputValue
 	}
 	return outputs, nil
+}
+
+// tlsThumbprint connects to a host on port 443 and returns the SHA-1
+// fingerprint of the leaf TLS certificate, lowercase hex encoded.
+// This is the format AWS IAM expects for OIDC provider thumbprints.
+func tlsThumbprint(host string) (string, error) {
+	conn, err := tls.Dial("tcp", host+":443", &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	})
+	if err != nil {
+		return "", fmt.Errorf("TLS connect to %s: %w", host, err)
+	}
+	defer conn.Close()
+
+	certs := conn.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return "", fmt.Errorf("no certificates from %s", host)
+	}
+
+	// Use the last cert in the chain (root or intermediate closest to root)
+	// AWS docs say to use the top intermediate CA certificate
+	cert := certs[len(certs)-1]
+	fingerprint := sha1.Sum(cert.Raw)
+	return hex.EncodeToString(fingerprint[:]), nil
 }
 
 // awsCLIAvailable checks if the AWS CLI is installed.
