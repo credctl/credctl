@@ -102,6 +102,16 @@ func runAuthAWS(cfg *config.Config) error {
 		fmt.Fprintf(os.Stderr, "JWT sub:    %s\n", cfg.DeviceID)
 		fmt.Fprintf(os.Stderr, "JWT aud:    sts.amazonaws.com\n")
 		fmt.Fprintf(os.Stderr, "JWT token:  %s\n", token)
+
+		// Self-verify: check JWT signature against device.pub
+		pubKeyPath, _ := activeDeps.publicKeyPath()
+		pubKeyPEM, _ := os.ReadFile(pubKeyPath)
+		if verifyErr := jwt.VerifyToken(token, pubKeyPEM); verifyErr != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: JWT self-verification FAILED: %v\n", verifyErr)
+			fmt.Fprintln(os.Stderr, "The Secure Enclave may be signing with a different key than device.pub")
+		} else {
+			fmt.Fprintln(os.Stderr, "JWT self-verification: OK")
+		}
 	}
 
 	// Call STS — session name must match [\w+=,.@-]*

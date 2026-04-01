@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -11,6 +12,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 )
 
@@ -136,6 +138,42 @@ func PublicKeyFromPEM(pemData []byte) (any, error) {
 	}
 
 	return key, nil
+}
+
+// VerifyToken verifies a JWT's ES256 signature against a PEM-encoded public key.
+func VerifyToken(token string, pubKeyPEM []byte) error {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return fmt.Errorf("invalid JWT: expected 3 parts, got %d", len(parts))
+	}
+
+	sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return fmt.Errorf("decode signature: %w", err)
+	}
+	if len(sigBytes) != 64 {
+		return fmt.Errorf("unexpected signature length: %d (expected 64)", len(sigBytes))
+	}
+
+	key, err := PublicKeyFromPEM(pubKeyPEM)
+	if err != nil {
+		return fmt.Errorf("parse public key: %w", err)
+	}
+	ecKey, ok := key.(*ecdsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("not an ECDSA public key")
+	}
+
+	r := new(big.Int).SetBytes(sigBytes[:32])
+	s := new(big.Int).SetBytes(sigBytes[32:])
+
+	signingInput := parts[0] + "." + parts[1]
+	hash := sha256.Sum256([]byte(signingInput))
+
+	if !ecdsa.Verify(ecKey, hash[:], r, s) {
+		return fmt.Errorf("signature verification failed")
+	}
+	return nil
 }
 
 func base64URLEncode(data []byte) string {
