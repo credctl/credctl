@@ -265,9 +265,15 @@ func createS3OIDCBucket(cfg *config.Config) (string, error) {
 func createAWSIAMResources(cfg *config.Config, issuerURL string) (string, error) {
 	issuerHost := strings.TrimPrefix(issuerURL, "https://")
 
+	// Extract just the hostname for TLS (issuerHost may include a path)
+	tlsHost := issuerHost
+	if idx := strings.IndexByte(tlsHost, '/'); idx != -1 {
+		tlsHost = tlsHost[:idx]
+	}
+
 	// Compute the TLS certificate thumbprint for the OIDC endpoint
-	fmt.Fprintf(os.Stderr, "Fetching TLS thumbprint for %s...\n", issuerHost)
-	thumbprint, err := activeDeps.tlsThumbprint(issuerHost)
+	fmt.Fprintf(os.Stderr, "Fetching TLS thumbprint for %s...\n", tlsHost)
+	thumbprint, err := activeDeps.tlsThumbprint(tlsHost)
 	if err != nil {
 		return "", fmt.Errorf("get TLS thumbprint: %w", err)
 	}
