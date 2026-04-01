@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -81,6 +82,14 @@ func runSetupAWS(cmd *cobra.Command, args []string) error {
 
 	if !awsCLIAvailable() {
 		return fmt.Errorf("AWS CLI not found — install it from https://aws.amazon.com/cli/")
+	}
+
+	// Validate inputs against allowed characters
+	if err := validateAWSInput("role-name", setupRoleName); err != nil {
+		return err
+	}
+	if err := validateAWSInput("policy-arn", setupPolicyARN); err != nil {
+		return err
 	}
 
 	// --cloudfront: use the original CloudFormation path
@@ -516,6 +525,20 @@ func tlsThumbprint(host string) (string, error) {
 	h.Write(cert.Raw)
 	fingerprint := h.Sum(nil)
 	return hex.EncodeToString(fingerprint[:]), nil
+}
+
+// validateAWSInput checks that a flag value contains only safe characters for AWS API calls.
+// Prevents injection via CloudFormation parameters or IAM API calls.
+var awsInputPattern = regexp.MustCompile(`^[a-zA-Z0-9_+=,.@:/-]+$`)
+
+func validateAWSInput(flagName, value string) error {
+	if value == "" {
+		return nil
+	}
+	if !awsInputPattern.MatchString(value) {
+		return fmt.Errorf("--%s contains invalid characters (allowed: alphanumeric, _+=,.@:/-)", flagName)
+	}
+	return nil
 }
 
 // awsCLIAvailable checks if the AWS CLI is installed.

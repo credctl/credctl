@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/credctl/credctl/internal/config"
@@ -95,22 +96,22 @@ func runAuthAWS(cfg *config.Config) error {
 		return fmt.Errorf("build JWT: %w", err)
 	}
 
+	// Always verify JWT signature against device.pub before sending to STS
+	pubKeyPath, _ := activeDeps.publicKeyPath()
+	pubKeyPEM, _ := os.ReadFile(pubKeyPath)
+	if verifyErr := jwt.VerifyToken(token, pubKeyPEM); verifyErr != nil {
+		return fmt.Errorf("JWT self-verification failed (Secure Enclave may be signing with a stale key — try 'credctl init --force'): %w", verifyErr)
+	}
+
 	if verbose {
 		fmt.Fprintf(os.Stderr, "JWT KID:    %s\n", kid)
 		fmt.Fprintf(os.Stderr, "JWT issuer: %s\n", cfg.AWS.IssuerURL)
 		fmt.Fprintf(os.Stderr, "JWT sub:    %s\n", cfg.DeviceID)
 		fmt.Fprintf(os.Stderr, "JWT aud:    sts.amazonaws.com\n")
-		fmt.Fprintf(os.Stderr, "JWT token:  %s\n", token)
-
-		// Self-verify: check JWT signature against device.pub
-		pubKeyPath, _ := activeDeps.publicKeyPath()
-		pubKeyPEM, _ := os.ReadFile(pubKeyPath)
-		if verifyErr := jwt.VerifyToken(token, pubKeyPEM); verifyErr != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: JWT self-verification FAILED: %v\n", verifyErr)
-			fmt.Fprintln(os.Stderr, "The Secure Enclave may be signing with a different key than device.pub")
-		} else {
-			fmt.Fprintln(os.Stderr, "JWT self-verification: OK")
-		}
+		// Redact token — show header only (no signature/claims)
+		parts := strings.SplitN(token, ".", 3)
+		fmt.Fprintf(os.Stderr, "JWT header: %s...\n", parts[0])
+		fmt.Fprintln(os.Stderr, "JWT self-verification: OK")
 	}
 
 	// Call STS — session name must match [\w+=,.@-]*
