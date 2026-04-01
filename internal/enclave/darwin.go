@@ -135,7 +135,7 @@ static int extractPublicKeyBytes(SecKeyRef privateKey, void **outBytes, int *out
     return 0;
 }
 
-// lookupKey finds an existing key by application tag.
+// lookupKey finds an existing private key by application tag.
 // Returns 0 on success (key found), -1 on failure (not found or error).
 static int lookupKey(const char *tag, int tagLen, SecKeyRef *outKey, char *errBuf, int errBufLen) {
     CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
@@ -143,6 +143,7 @@ static int lookupKey(const char *tag, int tagLen, SecKeyRef *outKey, char *errBu
 
     CFDictionarySetValue(query, kSecClass, kSecClassKey);
     CFDictionarySetValue(query, kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom);
+    CFDictionarySetValue(query, kSecAttrKeyClass, kSecAttrKeyClassPrivate);
 
     CFDataRef tagData = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)tag, tagLen);
     CFDictionarySetValue(query, kSecAttrApplicationTag, tagData);
@@ -164,13 +165,12 @@ static int lookupKey(const char *tag, int tagLen, SecKeyRef *outKey, char *errBu
     return 0;
 }
 
-// deleteKey deletes ALL keys matching the application tag.
+// deleteKey deletes ALL keys (private and public) matching the application tag.
 // Loops until no more keys are found, to handle duplicate keys
 // from repeated init runs.
 // Returns 0 on success, -1 on failure.
 static int deleteKey(const char *tag, int tagLen, char *errBuf, int errBufLen) {
     CFDataRef tagData = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)tag, tagLen);
-    int deleted = 0;
 
     while (1) {
         CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
@@ -184,14 +184,13 @@ static int deleteKey(const char *tag, int tagLen, char *errBuf, int errBufLen) {
         CFRelease(query);
 
         if (status == errSecItemNotFound) {
-            break;  // no more keys with this tag
+            break;
         }
         if (status != errSecSuccess) {
             CFRelease(tagData);
             snprintf(errBuf, errBufLen, "failed to delete key (OSStatus %d)", (int)status);
             return -1;
         }
-        deleted++;
     }
 
     CFRelease(tagData);
