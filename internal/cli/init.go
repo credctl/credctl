@@ -59,12 +59,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("Secure Enclave is not available on this device")
 	}
 
-	// If --force, delete existing key
+	// Always delete any existing keys with this tag before generating.
+	// This handles stale keys left behind by reset (which deletes config
+	// but can't delete Secure Enclave keys without the signed binary).
 	if cfg != nil && initForce {
 		fmt.Println("Deleting existing key...")
-		if err := enc.DeleteKey(cfg.KeyTag); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not delete existing key: %v\n", err)
-		}
+	}
+	if err := enc.DeleteKey(initKeyTag); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not delete existing key: %v\n", err)
 	}
 
 	// Generate key
