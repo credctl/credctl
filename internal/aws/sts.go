@@ -93,7 +93,7 @@ func assumeRole(endpoint, roleARN, sessionName, token string) (*Credentials, err
 		if xmlErr := xml.Unmarshal(body, &errResp); xmlErr == nil {
 			return nil, fmt.Errorf("STS error (%s): %s", errResp.Error.Code, errResp.Error.Message)
 		}
-		return nil, fmt.Errorf("STS request failed (HTTP %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("STS request failed (HTTP %d)", resp.StatusCode)
 	}
 
 	var stsResp stsResponse

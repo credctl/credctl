@@ -102,6 +102,10 @@ func DERToRaw(derSig []byte) ([]byte, error) {
 	rBytes := sig.R.Bytes()
 	sBytes := sig.S.Bytes()
 
+	if len(rBytes) > size || len(sBytes) > size {
+		return nil, fmt.Errorf("signature component too large: R=%d bytes, S=%d bytes (max %d)", len(rBytes), len(sBytes), size)
+	}
+
 	// Pad with leading zeros if needed, copy right-aligned
 	copy(raw[size-len(rBytes):size], rBytes)
 	copy(raw[2*size-len(sBytes):2*size], sBytes)
