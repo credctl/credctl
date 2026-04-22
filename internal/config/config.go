@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,6 +24,22 @@ type AWSConfig struct {
 	S3Bucket  string `json:"s3_bucket,omitempty"`
 }
 
+// GCPConfig holds optional GCP authentication settings.
+type GCPConfig struct {
+	ProjectNumber       string `json:"project_number"`
+	WorkloadPoolID      string `json:"workload_pool_id"`
+	ProviderID          string `json:"provider_id"`
+	ServiceAccountEmail string `json:"service_account_email"`
+	IssuerURL           string `json:"issuer_url"`
+	CredentialFilePath  string `json:"credential_file_path,omitempty"`
+}
+
+// Audience returns the GCP Workload Identity Provider audience string.
+func (g *GCPConfig) Audience() string {
+	return fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s",
+		g.ProjectNumber, g.WorkloadPoolID, g.ProviderID)
+}
+
 // Config represents the persisted device identity configuration.
 type Config struct {
 	Version       int        `json:"version"`
@@ -32,7 +49,9 @@ type Config struct {
 	EnclaveType   string     `json:"enclave_type"`
 	TPMHandle     uint32     `json:"tpm_handle,omitempty"`
 	PublicKeyPath string     `json:"public_key_path"`
+	Biometric     string     `json:"biometric,omitempty"`
 	AWS           *AWSConfig `json:"aws,omitempty"`
+	GCP           *GCPConfig `json:"gcp,omitempty"`
 }
 
 // ConfigDir returns the path to ~/.credctl.
@@ -70,11 +89,21 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
+		return nil, err
+	}
+
+	// Warn if config file is readable by group or others
+	if perm := info.Mode().Perm(); perm&0077 != 0 {
+		fmt.Fprintf(os.Stderr, "Warning: %s has permissions %o, expected 0600 — run: chmod 600 %s\n", path, perm, path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return nil, err
 	}
 

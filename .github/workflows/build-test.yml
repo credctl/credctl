@@ -1,27 +1,35 @@
-name: Release
+name: Build Test
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build (SHA, branch, or tag)"
+        required: true
+        default: "main"
 
 permissions:
   contents: write
 
 jobs:
-  release-darwin:
+  build:
     runs-on: macos-14
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.1"
+          go-version: "1.25.7"
 
-      - name: Extract version from tag
+      - name: Determine version label
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "VERSION=test-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Import signing certificate
         env:
@@ -90,70 +98,15 @@ jobs:
       - name: Package
         run: make package VERSION=${{ steps.version.outputs.VERSION }} SIGNING_DIR=$RUNNER_TEMP/apple-signing
 
-      - name: Release (darwin)
-        uses: softprops/action-gh-release@v2
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          generate_release_notes: true
-          files: |
+          name: credctl-${{ steps.version.outputs.VERSION }}-darwin-arm64
+          path: |
             dist/credctl-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz
             dist/checksums.txt
-
-      - name: Update Homebrew tap
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          SHA256=$(awk '{print $1}' dist/checksums.txt)
-          VERSION=${{ steps.version.outputs.VERSION }}
-
-          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/credctl/homebrew-tap.git /tmp/homebrew-tap
-          cd /tmp/homebrew-tap
-
-          sed -i '' "s/version \".*\"/version \"${VERSION}\"/" Casks/credctl.rb
-          sed -i '' "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Casks/credctl.rb
-
-          git config user.name "credctl-bot"
-          git config user.email "bot@credctl.com"
-          git add Casks/credctl.rb
-          git commit -m "Update credctl to ${VERSION}"
-          git push
+          retention-days: 14
 
       - name: Cleanup keychain
         if: always()
         run: security delete-keychain $RUNNER_TEMP/signing.keychain-db || true
-
-  release-linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.26.1"
-
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Build Linux amd64
-        run: |
-          make build-linux VERSION=${{ steps.version.outputs.VERSION }}
-
-      - name: Build Linux arm64
-        run: |
-          make build-linux-arm64 VERSION=${{ steps.version.outputs.VERSION }}
-
-      - name: Package
-        run: |
-          mkdir -p dist
-          tar -czf dist/credctl-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz -C build credctl-linux-amd64
-          tar -czf dist/credctl-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz -C build credctl-linux-arm64
-          cd dist && shasum -a 256 *.tar.gz > checksums-linux.txt
-
-      - name: Release (linux)
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/credctl-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
-            dist/credctl-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
-            dist/checksums-linux.txt

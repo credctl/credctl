@@ -29,9 +29,9 @@ build/
 credctl
 .DS_Store
 
-# Xcode
-xcode/build/
-xcuserdata/
+# Apple signing artifacts (live in credctl/apple-signing)
+entitlements.plist
+embedded.provisionprofile
 
 # env file
 .env

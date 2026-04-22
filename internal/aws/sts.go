@@ -1,14 +1,24 @@
 package aws
 
 import (
+	"crypto/tls"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
+
+// stsClient is an HTTP client configured for STS calls with TLS 1.2+ and timeouts.
+var stsClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+	},
+}
 
 // Credentials holds temporary AWS credentials from STS.
 type Credentials struct {
@@ -49,17 +59,16 @@ type stsError struct {
 
 // AssumeRoleWithWebIdentity calls STS to assume an IAM role using a JWT.
 func AssumeRoleWithWebIdentity(roleARN, sessionName, token, region string) (*Credentials, error) {
-	host := "sts.amazonaws.com"
+	endpoint := "https://sts.amazonaws.com"
 	if region != "" {
-		host = "sts." + region + ".amazonaws.com"
+		endpoint = fmt.Sprintf("https://sts.%s.amazonaws.com", region)
 	}
 
-	endpoint := &url.URL{Scheme: "https", Host: host}
 	return assumeRole(endpoint, roleARN, sessionName, token)
 }
 
 // assumeRole performs the actual STS AssumeRoleWithWebIdentity HTTP call.
-func assumeRole(endpoint *url.URL, roleARN, sessionName, token string) (*Credentials, error) {
+func assumeRole(endpoint, roleARN, sessionName, token string) (*Credentials, error) {
 	params := url.Values{
 		"Action":           {"AssumeRoleWithWebIdentity"},
 		"Version":          {"2011-06-15"},
@@ -68,19 +77,7 @@ func assumeRole(endpoint *url.URL, roleARN, sessionName, token string) (*Credent
 		"WebIdentityToken": {token},
 	}
 
-	encoded := params.Encode()
-	req := &http.Request{
-		Method: "POST",
-		URL:    endpoint,
-		Host:   endpoint.Host,
-		Header: http.Header{
-			"Content-Type": {"application/x-www-form-urlencoded"},
-		},
-		Body:          io.NopCloser(strings.NewReader(encoded)),
-		ContentLength: int64(len(encoded)),
-	}
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := stsClient.PostForm(endpoint, params)
 	if err != nil {
 		return nil, fmt.Errorf("STS request failed: %w", err)
 	}
@@ -96,7 +93,7 @@ func assumeRole(endpoint *url.URL, roleARN, sessionName, token string) (*Credent
 		if xmlErr := xml.Unmarshal(body, &errResp); xmlErr == nil {
 			return nil, fmt.Errorf("STS error (%s): %s", errResp.Error.Code, errResp.Error.Message)
 		}
-		return nil, fmt.Errorf("STS request failed (HTTP %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("STS request failed (HTTP %d)", resp.StatusCode)
 	}
 
 	var stsResp stsResponse

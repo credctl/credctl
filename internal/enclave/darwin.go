@@ -11,9 +11,10 @@ package enclave
 #include <string.h>
 
 // generateSecureEnclaveKey creates an ECDSA P-256 key pair in the Secure Enclave.
+// biometricPolicy: 0 = none, 1 = any (UserPresence), 2 = fingerprint (BiometryCurrentSet)
 // On success, returns the SecKeyRef for the private key via *outKey and 0.
 // On failure, returns non-zero and writes an error description to errBuf.
-static int generateSecureEnclaveKey(const char *tag, int tagLen, SecKeyRef *outKey, char *errBuf, int errBufLen) {
+static int generateSecureEnclaveKey(const char *tag, int tagLen, int biometricPolicy, SecKeyRef *outKey, char *errBuf, int errBufLen) {
     CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 
@@ -27,11 +28,22 @@ static int generateSecureEnclaveKey(const char *tag, int tagLen, SecKeyRef *outK
     CFDictionarySetValue(attrs, kSecAttrTokenID, kSecAttrTokenIDSecureEnclave);
 
     // Access control — required for Secure Enclave keys
+    // Determine flags based on biometric policy
+    SecAccessControlCreateFlags acFlags;
+    if (biometricPolicy == 0) {
+        acFlags = kSecAccessControlPrivateKeyUsage;
+    } else if (biometricPolicy == 2) {
+        acFlags = kSecAccessControlPrivateKeyUsage | kSecAccessControlBiometryCurrentSet;
+    } else {
+        // Default: require user presence (fail-closed)
+        acFlags = kSecAccessControlPrivateKeyUsage | kSecAccessControlUserPresence;
+    }
+
     CFErrorRef acError = NULL;
     SecAccessControlRef access = SecAccessControlCreateWithFlags(
         kCFAllocatorDefault,
         kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        kSecAccessControlPrivateKeyUsage,
+        acFlags,
         &acError);
     if (access == NULL) {
         if (acError != NULL) {
@@ -110,6 +122,11 @@ static int extractPublicKeyBytes(SecKeyRef privateKey, void **outBytes, int *out
 
     CFIndex len = CFDataGetLength(pubData);
     void *buf = malloc(len);
+    if (buf == NULL) {
+        CFRelease(pubData);
+        snprintf(errBuf, errBufLen, "malloc failed for public key");
+        return -1;
+    }
     memcpy(buf, CFDataGetBytePtr(pubData), len);
     CFRelease(pubData);
 
@@ -118,7 +135,7 @@ static int extractPublicKeyBytes(SecKeyRef privateKey, void **outBytes, int *out
     return 0;
 }
 
-// lookupKey finds an existing key by application tag.
+// lookupKey finds an existing private key by application tag.
 // Returns 0 on success (key found), -1 on failure (not found or error).
 static int lookupKey(const char *tag, int tagLen, SecKeyRef *outKey, char *errBuf, int errBufLen) {
     CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
@@ -126,6 +143,7 @@ static int lookupKey(const char *tag, int tagLen, SecKeyRef *outKey, char *errBu
 
     CFDictionarySetValue(query, kSecClass, kSecClassKey);
     CFDictionarySetValue(query, kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom);
+    CFDictionarySetValue(query, kSecAttrKeyClass, kSecAttrKeyClassPrivate);
 
     CFDataRef tagData = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)tag, tagLen);
     CFDictionarySetValue(query, kSecAttrApplicationTag, tagData);
@@ -147,28 +165,35 @@ static int lookupKey(const char *tag, int tagLen, SecKeyRef *outKey, char *errBu
     return 0;
 }
 
-// deleteKey deletes a key by application tag.
+// deleteKey deletes ALL keys (private and public) matching the application tag.
+// Loops until no more keys are found, to handle duplicate keys
+// from repeated init runs.
 // Returns 0 on success, -1 on failure.
 static int deleteKey(const char *tag, int tagLen, char *errBuf, int errBufLen) {
-    CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-
-    CFDictionarySetValue(query, kSecClass, kSecClassKey);
-    CFDictionarySetValue(query, kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom);
-
     CFDataRef tagData = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)tag, tagLen);
-    CFDictionarySetValue(query, kSecAttrApplicationTag, tagData);
 
-    OSStatus status = SecItemDelete(query);
+    while (1) {
+        CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+            &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 
-    CFRelease(tagData);
-    CFRelease(query);
+        CFDictionarySetValue(query, kSecClass, kSecClassKey);
+        CFDictionarySetValue(query, kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom);
+        CFDictionarySetValue(query, kSecAttrApplicationTag, tagData);
 
-    if (status != errSecSuccess && status != errSecItemNotFound) {
-        snprintf(errBuf, errBufLen, "failed to delete key (OSStatus %d)", (int)status);
-        return -1;
+        OSStatus status = SecItemDelete(query);
+        CFRelease(query);
+
+        if (status == errSecItemNotFound) {
+            break;
+        }
+        if (status != errSecSuccess) {
+            CFRelease(tagData);
+            snprintf(errBuf, errBufLen, "failed to delete key (OSStatus %d)", (int)status);
+            return -1;
+        }
     }
 
+    CFRelease(tagData);
     return 0;
 }
 
@@ -195,6 +220,11 @@ static int signData(SecKeyRef privateKey, const void *data, int dataLen, void **
 
     CFIndex len = CFDataGetLength(signature);
     void *buf = malloc(len);
+    if (buf == NULL) {
+        CFRelease(signature);
+        snprintf(errBuf, errBufLen, "malloc failed for signature");
+        return -1;
+    }
     memcpy(buf, CFDataGetBytePtr(signature), len);
     CFRelease(signature);
 
@@ -206,34 +236,24 @@ static int signData(SecKeyRef privateKey, const void *data, int dataLen, void **
 import "C"
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/pem"
 	"fmt"
-	"math/big"
-	"time"
 	"unsafe"
 )
 
-type darwinEnclave struct{}
+// cgoBackend implements keyBackend using macOS Security framework via CGO.
+type cgoBackend struct{}
 
 func newPlatformEnclave() Enclave {
-	return &darwinEnclave{}
+	return &enclaveImpl{backend: &cgoBackend{}}
 }
 
-func (e *darwinEnclave) Available() bool {
-	// Try to look up a non-existent key. If the Security framework is accessible,
-	// even a "not found" result means the enclave is available.
+func (b *cgoBackend) available() bool {
 	tag := "com.crzy.credctl.probe"
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 
 	var keyRef C.SecKeyRef
 	errBuf := make([]byte, 256)
-	// We don't care about the result — just that the call doesn't crash.
 	C.lookupKey(cTag, C.int(len(tag)), &keyRef, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if keyRef != 0 {
 		C.CFRelease(C.CFTypeRef(keyRef))
@@ -241,33 +261,34 @@ func (e *darwinEnclave) Available() bool {
 	return true
 }
 
-func (e *darwinEnclave) GenerateKey(tag string) (*DeviceKey, error) {
+func (b *cgoBackend) generateKey(tag string, biometric BiometricPolicy) ([]byte, error) {
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
+
+	// Map BiometricPolicy to C int: 0=none, 1=any, 2=fingerprint
+	var bPolicy C.int
+	switch biometric {
+	case BiometricAny:
+		bPolicy = 1
+	case BiometricFingerprint:
+		bPolicy = 2
+	default:
+		bPolicy = 1
+	}
 
 	var privateKey C.SecKeyRef
 	errBuf := make([]byte, 512)
 
-	rc := C.generateSecureEnclaveKey(cTag, C.int(len(tag)), &privateKey, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
+	rc := C.generateSecureEnclaveKey(cTag, C.int(len(tag)), bPolicy, &privateKey, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if rc != 0 {
 		return nil, fmt.Errorf("secure enclave key generation failed: %s", cGoString(errBuf))
 	}
 	defer C.CFRelease(C.CFTypeRef(privateKey))
 
-	pubPEM, fingerprint, err := extractPublicKey(privateKey)
-	if err != nil {
-		return nil, err
-	}
-
-	return &DeviceKey{
-		Fingerprint: fingerprint,
-		PublicKey:   pubPEM,
-		Tag:         tag,
-		CreatedAt:   time.Now(),
-	}, nil
+	return extractRawPublicKey(privateKey)
 }
 
-func (e *darwinEnclave) LoadKey(tag string) (*DeviceKey, error) {
+func (b *cgoBackend) lookupKey(tag string) ([]byte, error) {
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 
@@ -280,19 +301,10 @@ func (e *darwinEnclave) LoadKey(tag string) (*DeviceKey, error) {
 	}
 	defer C.CFRelease(C.CFTypeRef(keyRef))
 
-	pubPEM, fingerprint, err := extractPublicKey(keyRef)
-	if err != nil {
-		return nil, err
-	}
-
-	return &DeviceKey{
-		Fingerprint: fingerprint,
-		PublicKey:   pubPEM,
-		Tag:         tag,
-	}, nil
+	return extractRawPublicKey(keyRef)
 }
 
-func (e *darwinEnclave) DeleteKey(tag string) error {
+func (b *cgoBackend) deleteKey(tag string) error {
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 
@@ -304,11 +316,14 @@ func (e *darwinEnclave) DeleteKey(tag string) error {
 	return nil
 }
 
-func (e *darwinEnclave) Sign(tag string, data []byte) ([]byte, error) {
+func (b *cgoBackend) sign(tag string, data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("cannot sign empty data")
+	}
+
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 
-	// Look up the private key
 	var keyRef C.SecKeyRef
 	errBuf := make([]byte, 512)
 
@@ -327,60 +342,20 @@ func (e *darwinEnclave) Sign(tag string, data []byte) ([]byte, error) {
 	}
 	defer C.free(outSig)
 
-	sig := C.GoBytes(outSig, outSigLen)
-	return sig, nil
+	return C.GoBytes(outSig, outSigLen), nil
 }
 
-// extractPublicKey extracts the PEM-encoded public key and SHA-256 fingerprint from a SecKeyRef.
-func extractPublicKey(keyRef C.SecKeyRef) (pemBytes []byte, fingerprint string, err error) {
+// extractRawPublicKey extracts the raw uncompressed EC point bytes from a SecKeyRef.
+func extractRawPublicKey(keyRef C.SecKeyRef) ([]byte, error) {
 	var outBytes unsafe.Pointer
 	var outLen C.int
 	errBuf := make([]byte, 512)
 
 	rc := C.extractPublicKeyBytes(keyRef, &outBytes, &outLen, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if rc != 0 {
-		return nil, "", fmt.Errorf("failed to extract public key: %s", cGoString(errBuf))
+		return nil, fmt.Errorf("failed to extract public key: %s", cGoString(errBuf))
 	}
 	defer C.free(outBytes)
 
-	rawBytes := C.GoBytes(outBytes, outLen)
-
-	// rawBytes is the uncompressed EC point: 0x04 || x || y (65 bytes for P-256)
-	if len(rawBytes) != 65 || rawBytes[0] != 0x04 {
-		return nil, "", fmt.Errorf("unexpected public key format: %d bytes", len(rawBytes))
-	}
-
-	x := new(big.Int).SetBytes(rawBytes[1:33])
-	y := new(big.Int).SetBytes(rawBytes[33:65])
-
-	pubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     x,
-		Y:     y,
-	}
-
-	derBytes, err := x509.MarshalPKIXPublicKey(pubKey)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to marshal public key: %w", err)
-	}
-
-	pemBlock := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: derBytes,
-	})
-
-	hash := sha256.Sum256(derBytes)
-	fp := "SHA256:" + base64.StdEncoding.EncodeToString(hash[:])
-
-	return pemBlock, fp, nil
-}
-
-// cGoString converts a null-terminated C string in a Go byte slice to a Go string.
-func cGoString(buf []byte) string {
-	for i, b := range buf {
-		if b == 0 {
-			return string(buf[:i])
-		}
-	}
-	return string(buf)
+	return C.GoBytes(outBytes, outLen), nil
 }

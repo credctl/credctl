@@ -6,8 +6,7 @@ Thank you for your interest in contributing to credctl.
 
 - macOS with Secure Enclave (Apple Silicon or Intel with T2 chip)
 - Go 1.22+
-- Xcode (for code signing)
-- Apple Developer account (free tier works)
+- Apple Developer account (free tier works for local development)
 
 ## First-time setup
 
@@ -27,15 +26,13 @@ security import AppleWWDRCAG3.cer -k ~/Library/Keychains/login.keychain-db
 rm AppleWWDRCAG3.cer
 ```
 
-### 3. Generate the provisioning profile
+### 3. Clone the signing artifacts
 
-Open the Xcode project and build once from the GUI:
+Signing files (Info.plist, entitlements, provisioning profile) live in a separate private repo:
 
 ```bash
-open xcode/credctl.xcodeproj
+gh repo clone credctl/apple-signing ../apple-signing
 ```
-
-Select the `credctl` target, ensure **Automatically manage signing** is checked with your team selected, then press Cmd+B. Xcode registers your Mac and creates the provisioning profile.
 
 ### 4. Update Makefile with your signing identity
 
@@ -44,12 +41,12 @@ Select the `credctl` target, ensure **Automatically manage signing** is checked 
 security find-identity -v -p codesigning
 ```
 
-Update the `SIGNING_IDENTITY` in the Makefile and the team ID prefix in `entitlements.plist`.
+Update the `SIGNING_IDENTITY` when running `make build`.
 
 ## Build
 
 ```bash
-make build
+make build SIGNING_DIR=../apple-signing
 ```
 
 This compiles the Go binary, wraps it in a signed `.app` bundle with the provisioning profile, and produces:
@@ -66,7 +63,7 @@ alias credctl='./build/credctl.app/Contents/MacOS/credctl'
 
 ### Why the `.app` bundle?
 
-macOS requires a provisioning profile for binaries that use restricted entitlements like `keychain-access-groups`. Provisioning profiles can only be embedded in `.app` bundles, not standalone CLI binaries. The `.app` wrapper is minimal — it contains the Go binary, an `Info.plist`, and the provisioning profile.
+macOS requires a provisioning profile for binaries that use the Secure Enclave. Provisioning profiles can only be embedded in `.app` bundles, not standalone CLI binaries. The `.app` wrapper is minimal — it contains the Go binary, an `Info.plist`, and the provisioning profile.
 
 ### Cross-compilation
 
@@ -89,9 +86,6 @@ credctl/
 │   │   └── other.go                 # Non-macOS stub
 │   └── config/
 │       └── config.go                # Config read/write (~/.credctl/)
-├── xcode/                           # Xcode project (signing only)
-├── entitlements.plist               # Keychain access entitlements
-├── embedded.provisionprofile        # Apple provisioning profile
 ├── Makefile
 ├── go.mod
 └── go.sum

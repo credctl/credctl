@@ -8,12 +8,13 @@ import (
 	"github.com/credctl/credctl/internal/aws"
 	"github.com/credctl/credctl/internal/config"
 	"github.com/credctl/credctl/internal/enclave"
+	"github.com/credctl/credctl/internal/gcp"
 )
 
 // mockEnclave implements enclave.Enclave for testing.
 type mockEnclave struct {
 	available    bool
-	generateKey  func(tag string) (*enclave.DeviceKey, error)
+	generateKey  func(tag string, biometric enclave.BiometricPolicy) (*enclave.DeviceKey, error)
 	loadKey      func(tag string) (*enclave.DeviceKey, error)
 	deleteKey    func(tag string) error
 	sign         func(tag string, data []byte) ([]byte, error)
@@ -21,15 +22,16 @@ type mockEnclave struct {
 
 func (m *mockEnclave) Available() bool { return m.available }
 
-func (m *mockEnclave) GenerateKey(tag string) (*enclave.DeviceKey, error) {
+func (m *mockEnclave) GenerateKey(tag string, biometric enclave.BiometricPolicy) (*enclave.DeviceKey, error) {
 	if m.generateKey != nil {
-		return m.generateKey(tag)
+		return m.generateKey(tag, biometric)
 	}
 	return &enclave.DeviceKey{
 		Fingerprint: "SHA256:testfp123456",
 		PublicKey:   []byte("-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----\n"),
 		Tag:         tag,
 		CreatedAt:   time.Now(),
+		Biometric:   biometric,
 	}, nil
 }
 
@@ -88,6 +90,29 @@ func testDeps(enc enclave.Enclave) deps {
 				Expiration:     time.Now().Add(1 * time.Hour),
 			}, nil
 		},
+		lookPath: func(name string) (string, error) { return "/usr/local/bin/" + name, nil },
+		gcpExchangeToken: func(audience, subjectToken string) (*gcp.FederatedToken, error) {
+			return &gcp.FederatedToken{
+				AccessToken: "federated-token",
+				ExpiresIn:   3600,
+				TokenType:   "Bearer",
+			}, nil
+		},
+		gcpGenerateAccessToken: func(sa, token string, scopes []string) (*gcp.AccessToken, error) {
+			return &gcp.AccessToken{
+				Token:      "ya29.test-access-token",
+				ExpireTime: time.Now().Add(1 * time.Hour),
+			}, nil
+		},
+		tlsThumbprint: func(host string) (string, error) {
+			return "aabbccddee00112233445566778899aabbccddee", nil
+		},
+		execCommand: func(name string, args ...string) ([]byte, error) {
+			return nil, fmt.Errorf("mock: command %s not available in tests", name)
+		},
+		execCommandRun: func(name string, args ...string) error {
+			return fmt.Errorf("mock: command %s not available in tests", name)
+		},
 	}
 }
 
@@ -110,6 +135,19 @@ func testConfigWithAWS() *config.Config {
 		RoleARN:   "arn:aws:iam::123456789012:role/test",
 		IssuerURL: "https://d1234.cloudfront.net",
 		Region:    "us-east-1",
+	}
+	return cfg
+}
+
+// testConfigWithGCP returns a Config with GCP settings for testing.
+func testConfigWithGCP() *config.Config {
+	cfg := testConfig()
+	cfg.GCP = &config.GCPConfig{
+		ProjectNumber:       "123456789",
+		WorkloadPoolID:      "credctl-pool",
+		ProviderID:          "credctl-provider",
+		ServiceAccountEmail: "credctl@project.iam.gserviceaccount.com",
+		IssuerURL:           "https://d1234.cloudfront.net",
 	}
 	return cfg
 }

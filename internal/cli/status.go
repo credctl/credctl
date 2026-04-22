@@ -35,6 +35,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Key tag:      %s\n", cfg.KeyTag)
 	fmt.Printf("  Created:      %s\n", cfg.CreatedAt.Format(time.RFC3339))
 	fmt.Printf("  Public key:   %s\n", cfg.PublicKeyPath)
+	fmt.Printf("  Biometric:    %s\n", biometricLabel(cfg.Biometric))
 
 	// Verify key is still accessible
 	enc := activeDeps.newEnclave()
@@ -55,6 +56,19 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 		if cfg.AWS.S3Bucket != "" {
 			fmt.Printf("  S3 Bucket:  %s\n", cfg.AWS.S3Bucket)
+		}
+	}
+
+	// Show GCP config if present
+	if cfg.GCP != nil {
+		fmt.Println("\nGCP Configuration:")
+		fmt.Printf("  Project number:    %s\n", cfg.GCP.ProjectNumber)
+		fmt.Printf("  Workload pool:     %s\n", cfg.GCP.WorkloadPoolID)
+		fmt.Printf("  Provider:          %s\n", cfg.GCP.ProviderID)
+		fmt.Printf("  Service account:   %s\n", cfg.GCP.ServiceAccountEmail)
+		fmt.Printf("  Issuer URL:        %s\n", cfg.GCP.IssuerURL)
+		if cfg.GCP.CredentialFilePath != "" {
+			fmt.Printf("  Credential file:   %s\n", cfg.GCP.CredentialFilePath)
 		}
 	}
 

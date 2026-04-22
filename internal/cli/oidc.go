@@ -2,8 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/credctl/credctl/internal/config"
@@ -19,8 +19,9 @@ var (
 )
 
 var oidcCmd = &cobra.Command{
-	Use:   "oidc",
-	Short: "Manage OIDC discovery documents for AWS federation",
+	Use:    "oidc",
+	Short:  "Manage OIDC discovery documents for AWS federation",
+	Hidden: true,
 }
 
 var oidcGenerateCmd = &cobra.Command{
@@ -49,7 +50,19 @@ func init() {
 }
 
 func runOIDCGenerate(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load()
+	// Validate issuer URL
+	parsed, err := url.Parse(oidcIssuerURL)
+	if err != nil {
+		return fmt.Errorf("invalid issuer URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("issuer URL must use HTTPS (got %q)", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("issuer URL must include a hostname")
+	}
+
+	cfg, err := activeDeps.loadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
@@ -58,7 +71,7 @@ func runOIDCGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Read public key
-	pubKeyPath, err := config.PublicKeyPath()
+	pubKeyPath, err := activeDeps.publicKeyPath()
 	if err != nil {
 		return fmt.Errorf("public key path: %w", err)
 	}
@@ -79,7 +92,7 @@ func runOIDCGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Set up output directory
-	cfgDir, err := config.ConfigDir()
+	cfgDir, err := activeDeps.configDir()
 	if err != nil {
 		return fmt.Errorf("config dir: %w", err)
 	}
@@ -126,12 +139,18 @@ func runOIDCGenerate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("write JWKS: %w", err)
 	}
 
-	// Update config with issuer URL
+	// Update config with issuer URL for both providers
 	if cfg.AWS == nil {
 		cfg.AWS = &config.AWSConfig{}
 	}
 	cfg.AWS.IssuerURL = oidcIssuerURL
-	if err := config.Save(cfg); err != nil {
+
+	if cfg.GCP == nil {
+		cfg.GCP = &config.GCPConfig{}
+	}
+	cfg.GCP.IssuerURL = oidcIssuerURL
+
+	if err := activeDeps.saveConfig(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
@@ -145,7 +164,7 @@ func runOIDCGenerate(cmd *cobra.Command, args []string) error {
 }
 
 func runOIDCPublish(cmd *cobra.Command, args []string) error {
-	cfgDir, err := config.ConfigDir()
+	cfgDir, err := activeDeps.configDir()
 	if err != nil {
 		return fmt.Errorf("config dir: %w", err)
 	}
@@ -176,14 +195,14 @@ func runOIDCPublish(cmd *cobra.Command, args []string) error {
 	}
 
 	// Update config with bucket info
-	cfg, err := config.Load()
+	cfg, err := activeDeps.loadConfig()
 	if err == nil && cfg != nil {
 		if cfg.AWS == nil {
 			cfg.AWS = &config.AWSConfig{}
 		}
 		cfg.AWS.S3Bucket = oidcPublishBucket
 		cfg.AWS.Region = oidcPublishRegion
-		_ = config.Save(cfg)
+		_ = activeDeps.saveConfig(cfg)
 	}
 
 	fmt.Println("OIDC documents published to S3.")
@@ -191,11 +210,10 @@ func runOIDCPublish(cmd *cobra.Command, args []string) error {
 }
 
 func s3Upload(localPath, s3Path, contentType, region string) error {
-	//nolint:gosec // intentional shell-out to aws CLI for one-time operation
-	out, err := exec.Command("aws", "s3", "cp", localPath, s3Path,
+	out, err := activeDeps.execCommand("aws", "s3", "cp", localPath, s3Path,
 		"--content-type", contentType,
 		"--region", region,
-	).CombinedOutput()
+	)
 	if err != nil {
 		return fmt.Errorf("%s: %s", err, string(out))
 	}
