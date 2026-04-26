@@ -31,7 +31,7 @@ func TestTPMIntegration_GenerateLoadDelete(t *testing.T) {
 	// Clean up any leftover key from a previous failed run
 	enc.DeleteKey(tag)
 
-	key, err := enc.GenerateKey(tag)
+	key, err := enc.GenerateKey(tag, BiometricNone)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestTPMIntegration_Sign(t *testing.T) {
 
 	enc.DeleteKey(tag)
 
-	key, err := enc.GenerateKey(tag)
+	key, err := enc.GenerateKey(tag, BiometricNone)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
 	}

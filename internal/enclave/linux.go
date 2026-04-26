@@ -4,20 +4,17 @@ package enclave
 
 import (
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/asn1"
-	"encoding/base64"
-	"encoding/pem"
 	"fmt"
 	"math/big"
 	"os"
-	"time"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/linuxtpm"
 )
 
+// See ADR-006 for the rationale behind these choices.
 const (
 	tpmDevicePath = "/dev/tpmrm0"
 	srkPersistent = 0x81000001
@@ -29,13 +26,14 @@ var openTPM = func() (transport.TPMCloser, error) {
 	return linuxtpm.Open(tpmDevicePath)
 }
 
-type tpmEnclave struct{}
+// linuxTPMBackend implements keyBackend using Linux TPM 2.0.
+type linuxTPMBackend struct{}
 
 func newPlatformEnclave() Enclave {
-	return &tpmEnclave{}
+	return &enclaveImpl{backend: &linuxTPMBackend{}}
 }
 
-func (e *tpmEnclave) Available() bool {
+func (b *linuxTPMBackend) available() bool {
 	if _, err := os.Stat(tpmDevicePath); err != nil {
 		return false
 	}
@@ -47,14 +45,18 @@ func (e *tpmEnclave) Available() bool {
 	return true
 }
 
-func (e *tpmEnclave) GenerateKey(tag string) (*DeviceKey, error) {
+func (b *linuxTPMBackend) generateKey(tag string, biometric BiometricPolicy) ([]byte, error) {
+	if biometric == BiometricFingerprint {
+		return nil, fmt.Errorf("biometric=fingerprint is not supported on Linux TPM 2.0 (see ADR-006)")
+	}
+
 	tpm, err := openTPM()
 	if err != nil {
 		return nil, fmt.Errorf("failed to open TPM: %w", err)
 	}
 	defer tpm.Close()
 
-	// Check if key already exists at the persistent handle
+	// Refuse to clobber an existing key.
 	_, err = tpm2.ReadPublic{
 		ObjectHandle: tpm2.TPMHandle(keyPersistent),
 	}.Execute(tpm)
@@ -62,13 +64,11 @@ func (e *tpmEnclave) GenerateKey(tag string) (*DeviceKey, error) {
 		return nil, fmt.Errorf("key already exists at TPM handle 0x%08x", keyPersistent)
 	}
 
-	// Ensure SRK exists at the standard handle
 	srkHandle, err := ensureSRK(tpm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to ensure SRK: %w", err)
 	}
 
-	// Create ECDSA P-256 child key (non-exportable)
 	createRsp, err := tpm2.Create{
 		ParentHandle: srkHandle,
 		InPublic: tpm2.New2B(tpm2.TPMTPublic{
@@ -96,7 +96,6 @@ func (e *tpmEnclave) GenerateKey(tag string) (*DeviceKey, error) {
 		return nil, fmt.Errorf("failed to create key: %w", err)
 	}
 
-	// Load into transient memory
 	loadRsp, err := tpm2.Load{
 		ParentHandle: srkHandle,
 		InPrivate:    createRsp.OutPrivate,
@@ -107,7 +106,6 @@ func (e *tpmEnclave) GenerateKey(tag string) (*DeviceKey, error) {
 	}
 	defer tpm2.FlushContext{FlushHandle: loadRsp.ObjectHandle}.Execute(tpm)
 
-	// Persist to permanent handle
 	_, err = tpm2.EvictControl{
 		Auth: tpm2.TPMRHOwner,
 		ObjectHandle: &tpm2.NamedHandle{
@@ -120,51 +118,35 @@ func (e *tpmEnclave) GenerateKey(tag string) (*DeviceKey, error) {
 		return nil, fmt.Errorf("failed to persist key: %w", err)
 	}
 
-	pubPEM, fingerprint, err := readTPMPublicKey(tpm, keyPersistent)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract public key: %w", err)
-	}
-
-	return &DeviceKey{
-		Fingerprint: fingerprint,
-		PublicKey:   pubPEM,
-		Tag:         tag,
-		CreatedAt:   time.Now(),
-	}, nil
+	return readRawPublicKey(tpm, keyPersistent)
 }
 
-func (e *tpmEnclave) LoadKey(tag string) (*DeviceKey, error) {
+func (b *linuxTPMBackend) lookupKey(tag string) ([]byte, error) {
 	tpm, err := openTPM()
 	if err != nil {
 		return nil, fmt.Errorf("failed to open TPM: %w", err)
 	}
 	defer tpm.Close()
 
-	pubPEM, fingerprint, err := readTPMPublicKey(tpm, keyPersistent)
+	raw, err := readRawPublicKey(tpm, keyPersistent)
 	if err != nil {
 		return nil, fmt.Errorf("key not found at TPM handle 0x%08x: %w", keyPersistent, err)
 	}
-
-	return &DeviceKey{
-		Fingerprint: fingerprint,
-		PublicKey:   pubPEM,
-		Tag:         tag,
-	}, nil
+	return raw, nil
 }
 
-func (e *tpmEnclave) DeleteKey(tag string) error {
+func (b *linuxTPMBackend) deleteKey(tag string) error {
 	tpm, err := openTPM()
 	if err != nil {
 		return fmt.Errorf("failed to open TPM: %w", err)
 	}
 	defer tpm.Close()
 
-	// Read public to get the name for EvictControl
 	readRsp, err := tpm2.ReadPublic{
 		ObjectHandle: tpm2.TPMHandle(keyPersistent),
 	}.Execute(tpm)
 	if err != nil {
-		// Key doesn't exist — idempotent success
+		// Idempotent: nothing to delete.
 		return nil
 	}
 
@@ -179,18 +161,20 @@ func (e *tpmEnclave) DeleteKey(tag string) error {
 	if err != nil {
 		return fmt.Errorf("failed to evict key: %w", err)
 	}
-
 	return nil
 }
 
-func (e *tpmEnclave) Sign(tag string, data []byte) ([]byte, error) {
+func (b *linuxTPMBackend) sign(tag string, data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("cannot sign empty data")
+	}
+
 	tpm, err := openTPM()
 	if err != nil {
 		return nil, fmt.Errorf("failed to open TPM: %w", err)
 	}
 	defer tpm.Close()
 
-	// Get key name for authorization
 	readRsp, err := tpm2.ReadPublic{
 		ObjectHandle: tpm2.TPMHandle(keyPersistent),
 	}.Execute(tpm)
@@ -198,7 +182,6 @@ func (e *tpmEnclave) Sign(tag string, data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("key not found for signing: %w", err)
 	}
 
-	// Hash data — TPM requires pre-hashed input
 	digest := sha256.Sum256(data)
 
 	signRsp, err := tpm2.Sign{
@@ -239,7 +222,6 @@ func ensureSRK(tpm transport.TPM) (tpm2.NamedHandle, error) {
 		}, nil
 	}
 
-	// SRK not found — create from standard template and persist
 	srkRsp, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.TPMRHOwner,
 		InPublic:      tpm2.New2B(tpm2.ECCSRKTemplate),
@@ -267,50 +249,38 @@ func ensureSRK(tpm transport.TPM) (tpm2.NamedHandle, error) {
 	}, nil
 }
 
-// readTPMPublicKey reads the public key from a persistent TPM handle and returns
-// PEM-encoded PKIX bytes and a SHA-256 fingerprint.
-func readTPMPublicKey(tpm transport.TPM, handle uint32) ([]byte, string, error) {
+// readRawPublicKey reads the public key at a persistent handle and returns
+// the 65-byte uncompressed EC point (0x04 || X || Y). The enclaveImpl wrapper
+// converts this to PEM and computes the fingerprint.
+func readRawPublicKey(tpm transport.TPM, handle uint32) ([]byte, error) {
 	readRsp, err := tpm2.ReadPublic{
 		ObjectHandle: tpm2.TPMHandle(handle),
 	}.Execute(tpm)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to read public key: %w", err)
+		return nil, fmt.Errorf("failed to read public key: %w", err)
 	}
 
 	pub, err := readRsp.OutPublic.Contents()
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to parse public key: %w", err)
-	}
-
-	eccParms, err := pub.Parameters.ECCDetail()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to get ECC parameters: %w", err)
+		return nil, fmt.Errorf("failed to parse public key: %w", err)
 	}
 
 	eccPoint, err := pub.Unique.ECC()
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to get ECC point: %w", err)
+		return nil, fmt.Errorf("failed to get ECC point: %w", err)
 	}
 
-	ecdsaPub, err := tpm2.ECDSAPub(eccParms, eccPoint)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to convert to ECDSA public key: %w", err)
+	x := eccPoint.X.Buffer
+	y := eccPoint.Y.Buffer
+	if len(x) > 32 || len(y) > 32 {
+		return nil, fmt.Errorf("unexpected ECC point size: X=%d Y=%d", len(x), len(y))
 	}
 
-	derBytes, err := x509.MarshalPKIXPublicKey(ecdsaPub)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to marshal public key: %w", err)
-	}
-
-	pemBlock := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: derBytes,
-	})
-
-	hash := sha256.Sum256(derBytes)
-	fingerprint := "SHA256:" + base64.StdEncoding.EncodeToString(hash[:])
-
-	return pemBlock, fingerprint, nil
+	raw := make([]byte, 65)
+	raw[0] = 0x04
+	copy(raw[33-len(x):33], x)
+	copy(raw[65-len(y):65], y)
+	return raw, nil
 }
 
 // asn1MarshalECDSA DER-encodes an ECDSA signature.
