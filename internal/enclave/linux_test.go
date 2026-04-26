@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,11 +30,14 @@ func (n *nopCloser) Send(input []byte) ([]byte, error) {
 
 func (n *nopCloser) Close() error { return nil }
 
-// withSimulator opens a single TPM simulator for the test and overrides
-// openTPM to return it on every call. The simulator is closed at test cleanup.
+// withSimulator opens a single TPM simulator for the test, overrides openTPM
+// to return it on every call, and points tpmStateDir at a per-test temp dir
+// so the on-disk ownership token is isolated. Both globals are restored at
+// test cleanup.
 func withSimulator(t *testing.T) Enclave {
 	t.Helper()
-	orig := openTPM
+	origOpen := openTPM
+	origDir := tpmStateDir
 
 	sim, err := simulator.OpenSimulator()
 	if err != nil {
@@ -43,8 +48,12 @@ func withSimulator(t *testing.T) Enclave {
 		return &nopCloser{tpm: sim}, nil
 	}
 
+	dir := t.TempDir()
+	tpmStateDir = func() (string, error) { return dir, nil }
+
 	t.Cleanup(func() {
-		openTPM = orig
+		openTPM = origOpen
+		tpmStateDir = origDir
 		sim.Close()
 	})
 
@@ -296,6 +305,124 @@ func TestTPM_GenerateRefusesIfHandleOccupied(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("error should mention existing key: %v", err)
+	}
+}
+
+// statePath returns the path to the TPM ownership token used by the active
+// (test-overridden) tpmStateDir.
+func statePath(t *testing.T) string {
+	t.Helper()
+	dir, err := tpmStateDir()
+	if err != nil {
+		t.Fatalf("tpmStateDir: %v", err)
+	}
+	return filepath.Join(dir, tpmStateFile)
+}
+
+func TestTPM_GenerateWritesOwnershipToken(t *testing.T) {
+	enc := withSimulator(t)
+
+	if _, err := enc.GenerateKey("com.crzy.credctl.test-token", BiometricNone); err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	name, err := readTPMState()
+	if err != nil {
+		t.Fatalf("readTPMState: %v", err)
+	}
+	if len(name) == 0 {
+		t.Fatal("expected ownership token to be written")
+	}
+	// SHA-256 TPM Name is 2 (alg id) + 32 (digest) = 34 bytes.
+	if len(name) != 34 {
+		t.Errorf("Name length = %d, want 34", len(name))
+	}
+}
+
+func TestTPM_DeleteRefusesIfTokenMismatches(t *testing.T) {
+	enc := withSimulator(t)
+
+	if _, err := enc.GenerateKey("com.crzy.credctl.test-mismatch", BiometricNone); err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	// Tamper with the token: write a Name that doesn't match the actual object.
+	tampered := make([]byte, 34)
+	for i := range tampered {
+		tampered[i] = 0xFF
+	}
+	if err := writeTPMState(tampered); err != nil {
+		t.Fatalf("writeTPMState (tamper): %v", err)
+	}
+
+	err := enc.DeleteKey("com.crzy.credctl.test-mismatch")
+	if err == nil {
+		t.Fatal("DeleteKey should refuse when ownership token doesn't match")
+	}
+	if !strings.Contains(err.Error(), "Name does not match") {
+		t.Errorf("error should mention Name mismatch: %v", err)
+	}
+
+	// Object should still be at the handle.
+	if _, err := enc.LoadKey("ignored"); err != nil {
+		t.Errorf("our object should still be present after refused delete: %v", err)
+	}
+}
+
+func TestTPM_DeleteRefusesIfStateCorrupt(t *testing.T) {
+	enc := withSimulator(t)
+
+	if _, err := enc.GenerateKey("com.crzy.credctl.test-corrupt", BiometricNone); err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	// Corrupt the state file so JSON parsing fails.
+	if err := os.WriteFile(statePath(t), []byte("not json"), 0o600); err != nil {
+		t.Fatalf("write corrupt state: %v", err)
+	}
+
+	err := enc.DeleteKey("com.crzy.credctl.test-corrupt")
+	if err == nil {
+		t.Fatal("DeleteKey should refuse when state file is corrupt")
+	}
+	if !strings.Contains(err.Error(), "corrupt ownership state") {
+		t.Errorf("error should mention corrupt state: %v", err)
+	}
+}
+
+func TestTPM_DeleteFallsBackToStructuralCheck(t *testing.T) {
+	enc := withSimulator(t)
+
+	if _, err := enc.GenerateKey("com.crzy.credctl.test-fallback", BiometricNone); err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	// Simulate the user wiping ~/.credctl: state file gone, but TPM key still
+	// present. The structural fallback should accept the credctl-shaped object.
+	if err := deleteTPMState(); err != nil {
+		t.Fatalf("deleteTPMState: %v", err)
+	}
+
+	if err := enc.DeleteKey("com.crzy.credctl.test-fallback"); err != nil {
+		t.Errorf("DeleteKey should succeed via structural fallback when state is missing: %v", err)
+	}
+}
+
+func TestTPM_DeleteSucceedsWithMatchingToken(t *testing.T) {
+	enc := withSimulator(t)
+
+	if _, err := enc.GenerateKey("com.crzy.credctl.test-match", BiometricNone); err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	// State file written by generate; default delete must succeed.
+	if err := enc.DeleteKey("com.crzy.credctl.test-match"); err != nil {
+		t.Errorf("DeleteKey with matching token: %v", err)
+	}
+
+	// State file should be gone after a successful evict.
+	if _, err := os.Stat(statePath(t)); !os.IsNotExist(err) {
+		t.Errorf("state file should be removed after successful delete (err=%v)", err)
 	}
 }
 

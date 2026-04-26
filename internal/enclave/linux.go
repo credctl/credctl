@@ -4,10 +4,15 @@ package enclave
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/asn1"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
+	"path/filepath"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
@@ -24,6 +29,89 @@ const (
 // openTPM opens a connection to the TPM. Package-level var for test injection.
 var openTPM = func() (transport.TPMCloser, error) {
 	return linuxtpm.Open(tpmDevicePath)
+}
+
+// tpmStateDir returns the directory holding credctl's TPM ownership token.
+// Package-level var for test injection.
+var tpmStateDir = func() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".credctl"), nil
+}
+
+const tpmStateFile = "tpm-state.json"
+
+// tpmState is the on-disk ownership token. We persist the TPM Name (not just
+// the public key) because Name is the canonical TPM-side identifier — it
+// covers the algorithm, NameAlg, attributes, and public area in a single
+// hash. Comparing Names lets us assert "this is the exact object credctl
+// created" rather than just "this object has the right shape".
+type tpmState struct {
+	Version int    `json:"version"`
+	Name    string `json:"name"` // base64-encoded TPM Name (alg || hash(public_area))
+}
+
+func writeTPMState(name []byte) error {
+	dir, err := tpmStateDir()
+	if err != nil {
+		return fmt.Errorf("resolve state dir: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+	data, err := json.Marshal(tpmState{
+		Version: 1,
+		Name:    base64.StdEncoding.EncodeToString(name),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal state: %w", err)
+	}
+	path := filepath.Join(dir, tpmStateFile)
+	return os.WriteFile(path, data, 0o600)
+}
+
+// readTPMState returns the persisted Name, or (nil, nil) if no state file exists.
+// Any other error (malformed JSON, version mismatch, unreadable) is returned —
+// callers must treat that as "do not proceed".
+func readTPMState() ([]byte, error) {
+	dir, err := tpmStateDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve state dir: %w", err)
+	}
+	path := filepath.Join(dir, tpmStateFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read state: %w", err)
+	}
+	var s tpmState
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("parse state: %w", err)
+	}
+	if s.Version != 1 {
+		return nil, fmt.Errorf("unsupported state version %d", s.Version)
+	}
+	name, err := base64.StdEncoding.DecodeString(s.Name)
+	if err != nil {
+		return nil, fmt.Errorf("decode name: %w", err)
+	}
+	return name, nil
+}
+
+func deleteTPMState() error {
+	dir, err := tpmStateDir()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, tpmStateFile)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // linuxTPMBackend implements keyBackend using Linux TPM 2.0.
@@ -118,6 +206,12 @@ func (b *linuxTPMBackend) generateKey(tag string, biometric BiometricPolicy) ([]
 		return nil, fmt.Errorf("failed to persist key: %w", err)
 	}
 
+	// Persist the TPM Name as the ownership token. Used by deleteKey to assert
+	// that the object at keyPersistent is the exact one we created.
+	if err := writeTPMState(loadRsp.Name.Buffer); err != nil {
+		return nil, fmt.Errorf("failed to persist TPM ownership state: %w", err)
+	}
+
 	return readRawPublicKey(tpm, keyPersistent)
 }
 
@@ -146,14 +240,30 @@ func (b *linuxTPMBackend) deleteKey(tag string) error {
 		ObjectHandle: tpm2.TPMHandle(keyPersistent),
 	}.Execute(tpm)
 	if err != nil {
-		// Idempotent: nothing to delete.
+		// Idempotent: nothing to delete. Clear any orphaned ownership state.
+		_ = deleteTPMState()
 		return nil
 	}
 
 	// Per ADR-006 D3: refuse to evict a persistent object that wasn't created
-	// by credctl. The persistent handle is shared TPM real estate.
-	if err := verifyCredctlObject(&readRsp.OutPublic); err != nil {
-		return fmt.Errorf("refusing to evict TPM handle 0x%08x: %w", keyPersistent, err)
+	// by credctl. Two layers of check:
+	//   1. Strong: Name match against the on-disk ownership token. Names are
+	//      canonical TPM-side identifiers; a match is cryptographic proof
+	//      that this is the exact object credctl created.
+	//   2. Fallback: structural check on the public area, used only when the
+	//      ownership token is missing (e.g. user wiped ~/.credctl manually).
+	expectedName, err := readTPMState()
+	if err != nil {
+		return fmt.Errorf("refusing to evict TPM handle 0x%08x: corrupt ownership state: %w", keyPersistent, err)
+	}
+	if expectedName != nil {
+		if subtle.ConstantTimeCompare(expectedName, readRsp.Name.Buffer) != 1 {
+			return fmt.Errorf("refusing to evict TPM handle 0x%08x: object Name does not match credctl's recorded ownership token", keyPersistent)
+		}
+	} else {
+		if err := verifyCredctlObject(&readRsp.OutPublic); err != nil {
+			return fmt.Errorf("refusing to evict TPM handle 0x%08x: %w", keyPersistent, err)
+		}
 	}
 
 	_, err = tpm2.EvictControl{
@@ -167,6 +277,9 @@ func (b *linuxTPMBackend) deleteKey(tag string) error {
 	if err != nil {
 		return fmt.Errorf("failed to evict key: %w", err)
 	}
+
+	// Eviction succeeded — clear the now-stale ownership token.
+	_ = deleteTPMState()
 	return nil
 }
 
