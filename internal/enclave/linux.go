@@ -150,6 +150,12 @@ func (b *linuxTPMBackend) deleteKey(tag string) error {
 		return nil
 	}
 
+	// Per ADR-006 D3: refuse to evict a persistent object that wasn't created
+	// by credctl. The persistent handle is shared TPM real estate.
+	if err := verifyCredctlObject(&readRsp.OutPublic); err != nil {
+		return fmt.Errorf("refusing to evict TPM handle 0x%08x: %w", keyPersistent, err)
+	}
+
 	_, err = tpm2.EvictControl{
 		Auth: tpm2.TPMRHOwner,
 		ObjectHandle: &tpm2.NamedHandle{
@@ -160,6 +166,40 @@ func (b *linuxTPMBackend) deleteKey(tag string) error {
 	}.Execute(tpm)
 	if err != nil {
 		return fmt.Errorf("failed to evict key: %w", err)
+	}
+	return nil
+}
+
+// verifyCredctlObject returns nil if the public area matches the template
+// linuxTPMBackend.generateKey produces. This is a structural ownership check —
+// not cryptographic proof of provenance, but enough to refuse to clobber
+// objects parked at this handle by other TPM consumers (e.g. tpm2-tools'
+// default templates, OS-provisioned keys).
+func verifyCredctlObject(outPublic *tpm2.TPM2BPublic) error {
+	pub, err := outPublic.Contents()
+	if err != nil {
+		return fmt.Errorf("failed to parse public area: %w", err)
+	}
+	if pub.Type != tpm2.TPMAlgECC {
+		return fmt.Errorf("object is not ECC (alg=0x%04x)", uint16(pub.Type))
+	}
+	if pub.NameAlg != tpm2.TPMAlgSHA256 {
+		return fmt.Errorf("object NameAlg is not SHA-256 (alg=0x%04x)", uint16(pub.NameAlg))
+	}
+	a := pub.ObjectAttributes
+	if !a.FixedTPM || !a.FixedParent || !a.SensitiveDataOrigin ||
+		!a.UserWithAuth || !a.NoDA || !a.SignEncrypt || a.Restricted {
+		return fmt.Errorf("object attributes do not match credctl template")
+	}
+	eccParms, err := pub.Parameters.ECCDetail()
+	if err != nil {
+		return fmt.Errorf("failed to read ECC parameters: %w", err)
+	}
+	if eccParms.CurveID != tpm2.TPMECCNistP256 {
+		return fmt.Errorf("object curve is not P-256 (curve=0x%04x)", uint16(eccParms.CurveID))
+	}
+	if eccParms.Scheme.Scheme != tpm2.TPMAlgECDSA {
+		return fmt.Errorf("object scheme is not ECDSA (scheme=0x%04x)", uint16(eccParms.Scheme.Scheme))
 	}
 	return nil
 }

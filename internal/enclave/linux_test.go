@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/simulator"
 )
@@ -196,5 +197,105 @@ func TestTPM_BiometricAnyAccepted(t *testing.T) {
 		t.Fatalf("BiometricAny should be accepted on Linux TPM: %v", err)
 	}
 	t.Cleanup(func() { enc.DeleteKey(tag) })
+}
+
+// installForeignKey persists a non-credctl object (restricted ECC signing key,
+// which fails the verifyCredctlObject check) at keyPersistent. Used to test
+// that deleteKey refuses to evict objects it didn't create.
+func installForeignKey(t *testing.T) {
+	t.Helper()
+	tpm, err := openTPM()
+	if err != nil {
+		t.Fatalf("openTPM: %v", err)
+	}
+	defer tpm.Close()
+
+	srk, err := ensureSRK(tpm)
+	if err != nil {
+		t.Fatalf("ensureSRK: %v", err)
+	}
+
+	createRsp, err := tpm2.Create{
+		ParentHandle: srk,
+		InPublic: tpm2.New2B(tpm2.TPMTPublic{
+			Type:    tpm2.TPMAlgECC,
+			NameAlg: tpm2.TPMAlgSHA256,
+			ObjectAttributes: tpm2.TPMAObject{
+				FixedTPM:            true,
+				FixedParent:         true,
+				SensitiveDataOrigin: true,
+				UserWithAuth:        true,
+				NoDA:                true,
+				SignEncrypt:         true,
+				Restricted:          true, // mismatch — credctl creates Restricted=false
+			},
+			Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgECC, &tpm2.TPMSECCParms{
+				CurveID: tpm2.TPMECCNistP256,
+				Scheme: tpm2.TPMTECCScheme{
+					Scheme: tpm2.TPMAlgECDSA,
+					Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgECDSA,
+						&tpm2.TPMSSigSchemeECDSA{HashAlg: tpm2.TPMAlgSHA256}),
+				},
+			}),
+		}),
+	}.Execute(tpm)
+	if err != nil {
+		t.Fatalf("Create foreign key: %v", err)
+	}
+
+	loadRsp, err := tpm2.Load{
+		ParentHandle: srk,
+		InPrivate:    createRsp.OutPrivate,
+		InPublic:     createRsp.OutPublic,
+	}.Execute(tpm)
+	if err != nil {
+		t.Fatalf("Load foreign key: %v", err)
+	}
+	defer tpm2.FlushContext{FlushHandle: loadRsp.ObjectHandle}.Execute(tpm)
+
+	_, err = tpm2.EvictControl{
+		Auth: tpm2.TPMRHOwner,
+		ObjectHandle: &tpm2.NamedHandle{
+			Handle: loadRsp.ObjectHandle,
+			Name:   loadRsp.Name,
+		},
+		PersistentHandle: keyPersistent,
+	}.Execute(tpm)
+	if err != nil {
+		t.Fatalf("EvictControl persist foreign key: %v", err)
+	}
+}
+
+func TestTPM_DeleteRefusesForeignObject(t *testing.T) {
+	enc := withSimulator(t)
+
+	installForeignKey(t)
+
+	err := enc.DeleteKey("com.crzy.credctl.unused")
+	if err == nil {
+		t.Fatal("DeleteKey should refuse to evict a foreign object")
+	}
+	if !strings.Contains(err.Error(), "refusing to evict") {
+		t.Errorf("error should mention refusal: %v", err)
+	}
+
+	// The foreign object should still be at the handle.
+	if _, err := enc.LoadKey("ignored"); err != nil {
+		t.Errorf("foreign object should still be at handle after refused delete: %v", err)
+	}
+}
+
+func TestTPM_GenerateRefusesIfHandleOccupied(t *testing.T) {
+	enc := withSimulator(t)
+
+	installForeignKey(t)
+
+	_, err := enc.GenerateKey("com.crzy.credctl.unused", BiometricNone)
+	if err == nil {
+		t.Fatal("GenerateKey should refuse to clobber an occupied handle")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error should mention existing key: %v", err)
+	}
 }
 
