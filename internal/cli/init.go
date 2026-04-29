@@ -25,7 +25,7 @@ var initCmd = &cobra.Command{
 
 func init() {
 	initCmd.Flags().BoolVar(&initForce, "force", false, "Delete existing key and reinitialise")
-	initCmd.Flags().StringVar(&initKeyTag, "key-tag", config.DefaultKeyTag, "Override the keychain application tag")
+	initCmd.Flags().StringVar(&initKeyTag, "key-tag", config.DefaultKeyTag, "Override the application tag for the device key")
 	initCmd.Flags().StringVar(&initBiometric, "biometric", "any", "Biometric policy for signing: any, fingerprint, none")
 	rootCmd.AddCommand(initCmd)
 }
@@ -80,12 +80,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate key
-	enclaveName := "Secure Enclave"
-	enclaveType := "secure_enclave"
-	if runtime.GOOS == "linux" {
-		enclaveName = "TPM 2.0"
-		enclaveType = "tpm2"
-	}
+	enclaveName := enclaveDisplayName()
+	enclaveType := enclaveTypeID()
 	fmt.Printf("Generating %s key pair...\n", enclaveName)
 	key, err := enc.GenerateKey(initKeyTag, biometric)
 	if err != nil {

@@ -19,8 +19,8 @@ var resetCmd = &cobra.Command{
   - AWS: deletes CloudFormation stack, IAM role, IAM OIDC provider, S3 OIDC bucket
   - GCP: deletes Workload Identity Pool (cascades to providers and bindings), GCS OIDC bucket
 
-This is destructive and irreversible. The Secure Enclave key is NOT deleted
-(macOS manages its lifecycle), but the config referencing it is removed.`,
+This is destructive and irreversible. The hardware-bound key in the ` + enclaveDisplayName() + `
+is left in place; run 'credctl init --force' if you also want to rotate the key.`,
 	RunE: runReset,
 }
 

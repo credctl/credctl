@@ -22,8 +22,8 @@ var (
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
-	Short: "Get temporary cloud credentials using Secure Enclave identity",
-	Long: `Authenticates to a cloud provider by signing a JWT with the Secure Enclave key
+	Short: "Get temporary cloud credentials using hardware-bound identity",
+	Long: `Authenticates to a cloud provider by signing a JWT with the ` + enclaveDisplayName() + ` key
 and exchanging it for temporary credentials.
 
 AWS — use as a credential_process:
@@ -90,7 +90,7 @@ func runAuthAWS(cfg *config.Config) error {
 		return err
 	}
 
-	fmt.Fprintln(os.Stderr, "Signing JWT with Secure Enclave...")
+	fmt.Fprintln(os.Stderr, "Signing JWT with "+enclaveDisplayName()+"...")
 	token, err := jwt.BuildAndSign(kid, cfg.AWS.IssuerURL, cfg.DeviceID, "sts.amazonaws.com", signFn)
 	if err != nil {
 		return fmt.Errorf("build JWT: %w", err)
@@ -100,7 +100,7 @@ func runAuthAWS(cfg *config.Config) error {
 	pubKeyPath, _ := activeDeps.publicKeyPath()
 	pubKeyPEM, _ := os.ReadFile(pubKeyPath)
 	if verifyErr := jwt.VerifyToken(token, pubKeyPEM); verifyErr != nil {
-		return fmt.Errorf("JWT self-verification failed (Secure Enclave may be signing with a stale key — try 'credctl init --force'): %w", verifyErr)
+		return fmt.Errorf("JWT self-verification failed (%s may be signing with a stale key — try 'credctl init --force'): %w", enclaveDisplayName(), verifyErr)
 	}
 
 	if verbose {
@@ -185,7 +185,7 @@ func runAuthGCP(cfg *config.Config) error {
 
 	audience := cfg.GCP.Audience()
 
-	fmt.Fprintln(os.Stderr, "Signing JWT with Secure Enclave...")
+	fmt.Fprintln(os.Stderr, "Signing JWT with "+enclaveDisplayName()+"...")
 	token, err := jwt.BuildAndSign(kid, cfg.GCP.IssuerURL, cfg.DeviceID, audience, signFn)
 	if err != nil {
 		return fmt.Errorf("build JWT: %w", err)

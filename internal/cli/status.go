@@ -41,7 +41,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	enc := activeDeps.newEnclave()
 	_, err = enc.LoadKey(cfg.KeyTag)
 	if err != nil {
-		fmt.Println("  Key accessible: no (key not found in keychain)")
+		fmt.Printf("  Key accessible: no (key not found in %s)\n", enclaveStorageName())
 	} else {
 		fmt.Println("  Key accessible: yes")
 	}
