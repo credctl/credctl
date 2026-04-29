@@ -2,7 +2,7 @@
 
 **Cloud credentials that can't be stolen.**
 
-credctl uses your Mac's Secure Enclave to create hardware-bound device identities that replace long-lived cloud access keys with short-lived credentials. No plaintext keys on disk. Ever.
+credctl uses your machine's hardware security module — Secure Enclave on macOS, TPM 2.0 on Linux — to create hardware-bound device identities that replace long-lived cloud access keys with short-lived credentials. No plaintext keys on disk. Ever.
 
 ```bash
 brew install credctl/tap/credctl
@@ -12,19 +12,19 @@ brew install credctl/tap/credctl
 
 ```mermaid
 sequenceDiagram
-    participant SE as Secure Enclave
+    participant HW as Hardware enclave
     participant CLI as credctl
     participant STS as Cloud STS
 
-    CLI->>SE: Sign JWT (Touch ID)
-    SE-->>CLI: Signed JWT
+    CLI->>HW: Sign JWT
+    HW-->>CLI: Signed JWT
     CLI->>STS: Exchange for credentials
     STS-->>CLI: Temporary credentials (1h)
 ```
 
-1. **`credctl init`** — generates an ECDSA P-256 key pair in the Secure Enclave. The private key never leaves the hardware.
+1. **`credctl init`** — generates an ECDSA P-256 key pair in the hardware enclave (Secure Enclave on macOS, TPM 2.0 on Linux). The private key never leaves the hardware.
 2. **`credctl setup aws`** or **`credctl setup gcp`** — deploys federation infrastructure for your cloud provider.
-3. **`credctl auth`** — signs a JWT with the hardware key and exchanges it for short-lived credentials. Touch ID confirms every request.
+3. **`credctl auth`** — signs a JWT with the hardware key and exchanges it for short-lived credentials. On macOS, Touch ID confirms each request (configurable via `--biometric`).
 
 ## Quickstart
 
@@ -34,7 +34,7 @@ sequenceDiagram
 # Install
 brew install credctl/tap/credctl
 
-# Create device identity (Touch ID required)
+# Create device identity (Touch ID prompt on macOS)
 credctl init
 
 # Set up AWS infrastructure (one-time)
@@ -116,7 +116,7 @@ gcloud auth login --cred-file=~/.credctl/gcp-credentials.json
 ## CLI reference
 
 ```
-credctl init                    Create device identity in Secure Enclave
+credctl init                    Create device identity in hardware enclave
 credctl status                  Show device identity and configuration
 credctl auth                    Get temporary AWS credentials (default)
 credctl auth --provider gcp     Get temporary GCP credentials
@@ -139,7 +139,11 @@ Terraform modules are available as alternatives to the CLI setup commands:
 
 ## Requirements
 
-- macOS with Secure Enclave (Apple Silicon or Intel with T2 chip)
+One of:
+- **macOS** with Secure Enclave (Apple Silicon or Intel with T2 chip)
+- **Linux** with TPM 2.0 (`/dev/tpmrm0`; user in the `tss` group). Tested on Ubuntu 22.04+, Fedora 38+, Amazon Linux 2023.
+
+Plus:
 - AWS account and/or GCP project
 - AWS CLI v2 (for `setup aws`) or gcloud CLI (for `setup gcp`)
 
