@@ -35,6 +35,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Key tag:      %s\n", cfg.KeyTag)
 	fmt.Printf("  Created:      %s\n", cfg.CreatedAt.Format(time.RFC3339))
 	fmt.Printf("  Public key:   %s\n", cfg.PublicKeyPath)
+	if cfg.TPMHandle != 0 {
+		fmt.Printf("  TPM handle:   0x%08x\n", cfg.TPMHandle)
+	}
 	fmt.Printf("  Biometric:    %s\n", biometricLabel(cfg.Biometric))
 
 	// Verify key is still accessible
