@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/credctl/credctl/internal/config"
@@ -18,13 +19,13 @@ var (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Generate a Secure Enclave key pair and create device identity",
+	Short: "Generate a hardware-bound key pair and create device identity",
 	RunE:  runInit,
 }
 
 func init() {
 	initCmd.Flags().BoolVar(&initForce, "force", false, "Delete existing key and reinitialise")
-	initCmd.Flags().StringVar(&initKeyTag, "key-tag", config.DefaultKeyTag, "Override the keychain application tag")
+	initCmd.Flags().StringVar(&initKeyTag, "key-tag", config.DefaultKeyTag, "Override the application tag for the device key")
 	initCmd.Flags().StringVar(&initBiometric, "biometric", "any", "Biometric policy for signing: any, fingerprint, none")
 	rootCmd.AddCommand(initCmd)
 }
@@ -53,10 +54,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --biometric value %q: must be any, fingerprint, or none", initBiometric)
 	}
 
-	// Check Secure Enclave availability
+	// TPM 2.0 has no user-presence gate (see ADR-006). Any/None both produce an
+	// unauthenticated key; Fingerprint is rejected by the backend.
+	if runtime.GOOS == "linux" && biometric == enclave.BiometricAny {
+		biometric = enclave.BiometricNone
+	}
+
+	// Check hardware enclave availability
 	enc := activeDeps.newEnclave()
 	if !enc.Available() {
-		return fmt.Errorf("Secure Enclave is not available on this device")
+		if runtime.GOOS == "linux" {
+			return fmt.Errorf("TPM 2.0 is not available (check /dev/tpmrm0 permissions: sudo usermod -aG tss $USER)")
+		}
+		return fmt.Errorf("hardware enclave is not available on this device")
 	}
 
 	// Always delete any existing keys with this tag before generating.
@@ -70,7 +80,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate key
-	fmt.Println("Generating Secure Enclave key pair...")
+	enclaveName := enclaveDisplayName()
+	enclaveType := enclaveTypeID()
+	fmt.Printf("Generating %s key pair...\n", enclaveName)
 	key, err := enc.GenerateKey(initKeyTag, biometric)
 	if err != nil {
 		return fmt.Errorf("key generation failed: %w", err)
@@ -101,9 +113,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 		DeviceID:      key.Fingerprint,
 		KeyTag:        key.Tag,
 		CreatedAt:     key.CreatedAt,
-		EnclaveType:   "secure_enclave",
+		EnclaveType:   enclaveType,
 		PublicKeyPath: "~/.credctl/device.pub",
 		Biometric:     string(biometric),
+	}
+	if runtime.GOOS == "linux" {
+		newCfg.TPMHandle = 0x81010001
 	}
 
 	if err := activeDeps.saveConfig(newCfg); err != nil {
@@ -112,7 +127,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Print summary
 	fmt.Println()
-	fmt.Println("\u2713 Device identity created (Secure Enclave)")
+	fmt.Printf("\u2713 Device identity created (%s)\n", enclaveName)
 	fmt.Printf("  Fingerprint: %s\n", key.Fingerprint)
 	fmt.Printf("  Public key:  %s\n", pubKeyPath)
 	fmt.Printf("  Biometric:   %s\n", biometricLabel(string(biometric)))
@@ -124,6 +139,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 // biometricLabel returns a human-readable label for a biometric policy value.
 func biometricLabel(b string) string {
+	if runtime.GOOS == "linux" {
+		return "none (TPM 2.0 has no user-presence gate)"
+	}
 	switch b {
 	case "any":
 		return "Touch ID + passcode"
