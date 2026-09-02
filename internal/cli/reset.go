@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/credctl/credctl/internal/config"
@@ -19,8 +20,8 @@ var resetCmd = &cobra.Command{
   - AWS: deletes CloudFormation stack, IAM role, IAM OIDC provider, S3 OIDC bucket
   - GCP: deletes Workload Identity Pool (cascades to providers and bindings), GCS OIDC bucket
 
-This is destructive and irreversible. The Secure Enclave key is NOT deleted
-(macOS manages its lifecycle), but the config referencing it is removed.`,
+This is destructive and irreversible. ` + resetKeyHandlingNote() + `
+Run 'credctl init' to start fresh.`,
 	RunE: runReset,
 }
 
@@ -52,6 +53,20 @@ func runReset(cmd *cobra.Command, args []string) error {
 		teardownGCP(cfg)
 	}
 
+	// Evict the hardware key on Linux. Done before removing ~/.credctl so
+	// the on-disk ownership token is still available to verify ownership.
+	// On macOS we leave the Secure Enclave key in place — its lifecycle is
+	// managed by the keychain and we can't reliably delete it from this
+	// process anyway.
+	if runtime.GOOS == "linux" && cfg != nil && cfg.KeyTag != "" {
+		enc := activeDeps.newEnclave()
+		if err := enc.DeleteKey(cfg.KeyTag); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not evict TPM key: %v\n", err)
+		} else {
+			fmt.Fprintln(os.Stderr, "Evicted TPM key.")
+		}
+	}
+
 	// Delete ~/.credctl
 	cfgDir, err := activeDeps.configDir()
 	if err == nil {
@@ -63,6 +78,15 @@ func runReset(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(os.Stderr, "\nReset complete.")
 	return nil
+}
+
+// resetKeyHandlingNote returns a one-line description of what reset does
+// with the hardware-bound key on this platform.
+func resetKeyHandlingNote() string {
+	if runtime.GOOS == "linux" {
+		return "The TPM 2.0 key is evicted from the persistent handle."
+	}
+	return "The Secure Enclave key is left in place (managed by the keychain)."
 }
 
 func teardownAWS(cfg *config.Config) {

@@ -21,8 +21,9 @@ var daemonCmd = &cobra.Command{
 	Use:   "daemon",
 	Short: "Manage the credential caching daemon",
 	Long: `The credential daemon caches cloud credentials in memory after the first
-Touch ID authentication. Subsequent credctl auth calls return cached
-credentials instantly without re-triggering Touch ID or cloud STS calls.
+signing operation. Subsequent credctl auth calls return cached credentials
+instantly without re-signing or re-issuing cloud STS calls (and on platforms
+with a biometric prompt, without re-triggering it).
 
 Credentials are held in process memory only and never written to disk.`,
 }

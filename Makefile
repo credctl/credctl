@@ -9,7 +9,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 LDFLAGS := -X github.com/credctl/credctl/internal/cli.Version=$(VERSION) \
            -X github.com/credctl/credctl/internal/cli.Commit=$(COMMIT)
 
-.PHONY: build clean install package test test-integration coverage
+.PHONY: build build-linux build-linux-arm64 clean install package test test-integration test-linux coverage
 
 build:
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
@@ -40,6 +40,19 @@ test:
 
 test-integration:
 	go test -race -count=1 -tags=integration ./...
+
+build-linux:
+	@mkdir -p build
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o build/$(APP_NAME)-linux-amd64 ./cmd/credctl
+	@echo "Built: build/$(APP_NAME)-linux-amd64"
+
+build-linux-arm64:
+	@mkdir -p build
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o build/$(APP_NAME)-linux-arm64 ./cmd/credctl
+	@echo "Built: build/$(APP_NAME)-linux-arm64"
+
+test-linux:
+	GOOS=linux go test -race -count=1 ./...
 
 coverage:
 	go test -coverprofile=coverage.out -covermode=atomic ./...

@@ -18,7 +18,11 @@ func TestNew_AvailableMatchesPlatform(t *testing.T) {
 	if runtime.GOOS == "darwin" && !got {
 		t.Error("Available() should be true on darwin")
 	}
-	if runtime.GOOS != "darwin" && got {
-		t.Error("Available() should be false on non-darwin")
+	if runtime.GOOS == "linux" {
+		// On linux, availability depends on TPM hardware presence.
+		t.Logf("Available() on linux = %v (depends on /dev/tpmrm0)", got)
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && got {
+		t.Error("Available() should be false on unsupported platform")
 	}
 }

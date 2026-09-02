@@ -88,8 +88,8 @@ func TestRunInit_EnclaveNotAvailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "Secure Enclave") {
-		t.Errorf("error should mention Secure Enclave: %v", err)
+	if !strings.Contains(err.Error(), "not available") {
+		t.Errorf("error should mention enclave not available: %v", err)
 	}
 }
 

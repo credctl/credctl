@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  release-darwin:
     runs-on: macos-14
     timeout-minutes: 60
     steps:
@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.7"
+          go-version: "1.26.2"
 
       - name: Extract version from tag
         id: version
@@ -90,7 +90,7 @@ jobs:
       - name: Package
         run: make package VERSION=${{ steps.version.outputs.VERSION }} SIGNING_DIR=$RUNNER_TEMP/apple-signing
 
-      - name: Release
+      - name: Release (darwin)
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -120,3 +120,40 @@ jobs:
       - name: Cleanup keychain
         if: always()
         run: security delete-keychain $RUNNER_TEMP/signing.keychain-db || true
+
+  release-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.2"
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Linux amd64
+        run: |
+          make build-linux VERSION=${{ steps.version.outputs.VERSION }}
+
+      - name: Build Linux arm64
+        run: |
+          make build-linux-arm64 VERSION=${{ steps.version.outputs.VERSION }}
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          tar -czf dist/credctl-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz -C build credctl-linux-amd64
+          tar -czf dist/credctl-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz -C build credctl-linux-arm64
+          cd dist && shasum -a 256 *.tar.gz > checksums-linux.txt
+
+      - name: Release (linux)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/credctl-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
+            dist/credctl-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
+            dist/checksums-linux.txt

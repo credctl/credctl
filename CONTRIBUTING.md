@@ -4,11 +4,16 @@ Thank you for your interest in contributing to credctl.
 
 ## Prerequisites
 
-- macOS with Secure Enclave (Apple Silicon or Intel with T2 chip)
-- Go 1.22+
-- Apple Developer account (free tier works for local development)
+One of the supported platforms:
 
-## First-time setup
+- **macOS** with Secure Enclave (Apple Silicon or Intel with T2 chip), plus an Apple Developer account (free tier works for local development).
+- **Linux** with TPM 2.0 (`/dev/tpmrm0` accessible; user in the `tss` group). Tested on Ubuntu 22.04+, Fedora 38+, Amazon Linux 2023.
+
+Plus:
+
+- Go 1.26+
+
+## First-time setup (macOS)
 
 The Secure Enclave requires the binary to be signed with an Apple Development certificate and a provisioning profile. This is a one-time setup.
 
@@ -43,7 +48,7 @@ security find-identity -v -p codesigning
 
 Update the `SIGNING_IDENTITY` when running `make build`.
 
-## Build
+## Build (macOS)
 
 ```bash
 make build SIGNING_DIR=../apple-signing
@@ -65,13 +70,26 @@ alias credctl='./build/credctl.app/Contents/MacOS/credctl'
 
 macOS requires a provisioning profile for binaries that use the Secure Enclave. Provisioning profiles can only be embedded in `.app` bundles, not standalone CLI binaries. The `.app` wrapper is minimal — it contains the Go binary, an `Info.plist`, and the provisioning profile.
 
-### Cross-compilation
+## Build (Linux)
 
-The CLI compiles on non-macOS platforms (Secure Enclave functions return stub errors):
+No code signing or provisioning profile required:
 
 ```bash
-GOOS=linux CGO_ENABLED=0 go build -o credctl ./cmd/credctl
+make build-linux           # amd64
+make build-linux-arm64     # arm64
 ```
+
+Produces a static `CGO_ENABLED=0` binary at `build/credctl-linux-{amd64,arm64}`. Run it directly.
+
+### Cross-compilation
+
+The CLI cross-compiles for any supported platform from any host:
+
+```bash
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o credctl ./cmd/credctl
+```
+
+On platforms without a hardware enclave (anything other than macOS or Linux), the `Available()` check returns false and the enclave functions return stub errors.
 
 ## Project structure
 
@@ -80,10 +98,12 @@ credctl/
 ├── cmd/credctl/main.go              # Entry point
 ├── internal/
 │   ├── cli/                         # Cobra commands
-│   ├── enclave/                     # Secure Enclave abstraction
-│   │   ├── enclave.go               # Interface + DeviceKey struct
-│   │   ├── darwin.go                # macOS cgo implementation
-│   │   └── other.go                 # Non-macOS stub
+│   ├── enclave/                     # Hardware enclave abstraction
+│   │   ├── enclave.go               # Public Enclave interface + DeviceKey
+│   │   ├── backend.go               # keyBackend interface + enclaveImpl wrapper
+│   │   ├── darwin.go                # macOS cgo implementation (Secure Enclave)
+│   │   ├── linux.go                 # Linux implementation (TPM 2.0 via go-tpm)
+│   │   └── other.go                 # Stub for unsupported platforms
 │   └── config/
 │       └── config.go                # Config read/write (~/.credctl/)
 ├── Makefile
@@ -96,7 +116,8 @@ credctl/
 Open a [GitHub issue](https://github.com/credctl/credctl/issues) with:
 
 - `credctl version` output
-- macOS version (`sw_vers`)
+- OS and version (macOS: `sw_vers`; Linux: `lsb_release -a` or `cat /etc/os-release`)
+- Hardware (e.g. Apple Silicon M3, Intel T2; or `lscpu` and TPM model on Linux)
 - The full error message
 - Steps to reproduce
 
@@ -120,7 +141,7 @@ Open a [GitHub issue](https://github.com/credctl/credctl/issues) with:
 
 - Focused on a single change
 - Includes a clear description of what and why
-- Tested on macOS with Secure Enclave access
+- Tested on at least one supported platform (macOS with Secure Enclave or Linux with TPM 2.0)
 
 ## Security vulnerabilities
 

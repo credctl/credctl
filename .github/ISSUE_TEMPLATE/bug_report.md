@@ -9,11 +9,11 @@ assignees: ""
 **credctl version**
 <!-- Output of `credctl version` -->
 
-**macOS version**
-<!-- Output of `sw_vers` -->
+**OS and version**
+<!-- macOS: output of `sw_vers`. Linux: output of `lsb_release -a` or `cat /etc/os-release`. -->
 
 **Hardware**
-<!-- e.g. Apple Silicon M3, Intel T2 -->
+<!-- macOS: e.g. Apple Silicon M3, Intel T2. Linux: TPM model (try `tpm2_getcap properties-fixed` if you have tpm2-tools, or just describe the platform — Dell vPro, AWS NitroTPM, GCP Shielded VM, etc.). -->
 
 **What happened?**
 <!-- A clear description of the bug -->

@@ -1,10 +1,10 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package enclave
 
 import "fmt"
 
-// stubBackend implements keyBackend for non-macOS platforms.
+// stubBackend implements keyBackend for platforms without a hardware enclave.
 type stubBackend struct{}
 
 func newPlatformEnclave() Enclave {
@@ -16,17 +16,17 @@ func (b *stubBackend) available() bool {
 }
 
 func (b *stubBackend) generateKey(tag string, biometric BiometricPolicy) ([]byte, error) {
-	return nil, fmt.Errorf("Secure Enclave is only available on macOS")
+	return nil, fmt.Errorf("hardware enclave is not available on this platform")
 }
 
 func (b *stubBackend) lookupKey(tag string) ([]byte, error) {
-	return nil, fmt.Errorf("Secure Enclave is only available on macOS")
+	return nil, fmt.Errorf("hardware enclave is not available on this platform")
 }
 
 func (b *stubBackend) deleteKey(tag string) error {
-	return fmt.Errorf("Secure Enclave is only available on macOS")
+	return fmt.Errorf("hardware enclave is not available on this platform")
 }
 
 func (b *stubBackend) sign(tag string, data []byte) ([]byte, error) {
-	return nil, fmt.Errorf("Secure Enclave is only available on macOS")
+	return nil, fmt.Errorf("hardware enclave is not available on this platform")
 }
